@@ -128,7 +128,7 @@ def build_channel(sigTxo, paramCh):
 def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
     """
     Receiver chain: photodiode → normalization → sampling → decision → BER.
-    Supports OOK (M=2) and 4-PAM (M=4) via a unified multi-level slicer.
+    Supports OOK (M=2) and 4-PAM (M=4)
 
     Parameters
     ----------
@@ -163,29 +163,56 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
 
     # Sample at symbol center (one sample per symbol)
     I_dec = I_Rx[0::SpS]
+    print(I_dec[:50])
 
-    symbTx_ideal = pnorm(modulateGray(bitsTx, M, 'pam')).real
+    # Ideal constellation levels in ascending order.
+    # OOK : [-1, 1]
+    # 4-PAM : [-3, -1, 1, 3]
+    levels = np.sort(grayMapping(M, 'pam').real)
 
-    # Normalized levels: match the scale of I_dec, used only for thresholding
-    levels_norm = np.sort(np.unique(np.round(pnorm(grayMapping(M, 'pam')).real, 10)))
+    # Reconstruct the ideal transmitted PAM symbols from the known Tx bit sequence.
+    symbTx = modulateGray(bitsTx, M, 'pam').real
 
-    # Raw (un-normalized) levels: exactly what demodulateGray expects
-    levels_raw = np.sort(np.unique(np.round(grayMapping(M, 'pam').real, 10)))
+    # Assign each ideal transmitted symbol to its constellation index (0...M-1).
+    # For calculating means and stds.
+    symb_idx = np.argmin(
+        np.abs(symbTx[:, None] - levels[None, :]),
+        axis=1
+    )
 
-    symb_idx = np.argmin(np.abs(symbTx_ideal[:, None] - levels_norm[None, :]), axis=1)
-
+    # Estimate the mean and standard deviation of each received symbol cluster.
+    # For computing optimal decision thresholds.
     means = np.array([I_dec[symb_idx == k].mean() for k in range(M)])
     stds = np.array([I_dec[symb_idx == k].std() for k in range(M)])
 
+     # Compute the optimum threshold between every pair of adjacent symbol levels.
     thr = (stds[:-1] * means[1:] + stds[1:] * means[:-1]) / (stds[:-1] + stds[1:])
+    print(f'\nThresholds: {thr} \n')
 
+    # Decide which constellation index the received symbol belong to.
+    # The resulting indices are mapped back to the corresponding
+    # ideal PAM constellation levels for Gray demodulation.
     decided_idx = np.digitize(I_dec, thr)
-    symbDec = levels_raw[decided_idx]  # <-- use RAW levels here
+    symbDec = levels[decided_idx]
     bitsRx = demodulateGray(symbDec, M, 'pam').astype(int)
 
+    # TODO: Verify formulas (Q-factor, BER, error counting) for Performance metrics.
+    # -------------------------------------------------------------------------
+    # Performance metrics
+    # -------------------------------------------------------------------------
+
+    # Worst-case eye Q-factor across all adjacent symbol pairs.
+    # For OOK this is the conventional Q-factor; for 4-PAM it corresponds to the
+    # smallest eye opening.
     Q = np.min((means[1:] - means[:-1]) / (stds[1:] + stds[:-1]))
+
+    # Approximate theoretical BER derived from the worst-case Q-factor.
+    # This expression is exact for OOK and a nearest-neighbor approximation
+    # for Gray-coded M-PAM.
     Pb = (2 * (M - 1) / M) * 0.5 * erfc(Q / np.sqrt(2)) / np.log2(M)
 
+    # Compute the simulated BER after discarding guard symbols at both ends
+    # to avoid filter transient effects.
     err = np.logical_xor(
         bitsRx[discard: bitsRx.size - discard],
         bitsTx[discard: bitsTx.size - discard],
