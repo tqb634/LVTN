@@ -161,9 +161,9 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
     # Normalize
     I_Rx = I_Rx / np.std(I_Rx)
 
-    # Sample at symbol center (one sample per symbol)
+    # TODO: Change sampling method to account for chromatic dispersion and receiver filter bandwidth
+    # Sample (one sample per symbol)
     I_dec = I_Rx[0::SpS]
-    print(I_dec[:50])
 
     # Ideal constellation levels in ascending order.
     # OOK : [-1, 1]
@@ -187,7 +187,6 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
 
      # Compute the optimum threshold between every pair of adjacent symbol levels.
     thr = (stds[:-1] * means[1:] + stds[1:] * means[:-1]) / (stds[:-1] + stds[1:])
-    print(f'\nThresholds: {thr} \n')
 
     # Decide which constellation index the received symbol belong to.
     # The resulting indices are mapped back to the corresponding
@@ -202,8 +201,8 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
     # -------------------------------------------------------------------------
 
     # Worst-case eye Q-factor across all adjacent symbol pairs.
-    # For OOK this is the conventional Q-factor; for 4-PAM it corresponds to the
-    # smallest eye opening.
+    # For OOK this is the conventional Q-factor;
+    # For 4-PAM it corresponds to the smallest eye opening.
     Q = np.min((means[1:] - means[:-1]) / (stds[1:] + stds[:-1]))
 
     # Approximate theoretical BER derived from the worst-case Q-factor.
@@ -415,7 +414,7 @@ def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
 
-    return {'bandwidth': bw_range, 'BER': BER, 'Pb': Pb, 'Q': Q}
+    return {'bandwidth': bw_range, 'BER': BER, 'Pb': Pb, 'Q': Q, 'Rs': Rs}
 
 
 def sweep_ber_vs_fiber_length(length_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
@@ -567,28 +566,37 @@ def plot_ber_vs_power(results_list, labels=None, target_BER=None, title='BER vs 
     plt.show()
 
 
-def plot_ber_vs_bandwidth(results_list, Rs=10e9, labels=None,
+def plot_ber_vs_bandwidth(results_list, labels=None,
                           title='BER vs Receiver Bandwidth'):
     """
-    Plot BER as a function of normalized receiver bandwidth (B / Rs).
+    Plot BER as a function of receiver bandwidth.
 
     Parameters
     ----------
-    results_list : list of dict — Each dict is output from sweep_ber_vs_bandwidth()
-    Rs           : float        — Symbol rate [Hz] used for normalization
-    labels       : list of str
-    title        : str
+    results_list : list of dict
+        Output dictionaries from sweep_ber_vs_bandwidth().
+    labels : list of str, optional
+        Legend labels.
+    title : str
+        Plot title.
     """
     if labels is None:
         labels = [f'Config {i+1}' for i in range(len(results_list))]
 
     plt.figure(figsize=(8, 5))
-    for res, label in zip(results_list, labels):
-        bw_norm = res['bandwidth'] / Rs
-        plt.plot(bw_norm, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-', label=label)
 
-    plt.xlabel('Bandwidth / Rs')
-    plt.ylabel('log$_{10}$(BER)')
+    for res, label in zip(results_list, labels):
+        bw_GHz = res['bandwidth'] / 1e9
+
+        plt.plot(
+            bw_GHz,
+            np.log10(np.clip(res['BER'], 1e-12, 1)),
+            'o-',
+            label=label
+        )
+
+    plt.xlabel('Receiver Bandwidth [GHz]')
+    plt.ylabel(r'$\log_{10}(\mathrm{BER})$')
     plt.title(title)
     plt.grid(True)
     plt.legend()
