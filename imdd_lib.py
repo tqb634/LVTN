@@ -195,7 +195,6 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
     symbDec = levels[decided_idx]
     bitsRx = demodulateGray(symbDec, M, 'pam').astype(int)
 
-    # TODO: Verify formulas (Q-factor, BER, error counting) for Performance metrics.
     # -------------------------------------------------------------------------
     # Performance metrics
     # -------------------------------------------------------------------------
@@ -222,7 +221,6 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
         'BER': BER, 'Pb': Pb, 'Q': Q,
         'I_Rx': I_Rx_full, 'I_dec': I_dec, 'bitsRx': bitsRx,
     }
-
 
 # =============================================================================
 # 5. SINGLE-RUN SIMULATION
@@ -659,6 +657,28 @@ def plot_ber_vs_dispersion(results_list, labels=None, title='BER vs Fiber Disper
 # =============================================================================
 # 8. UTILITY FUNCTIONS
 # =============================================================================
+def _find_best_sampling_phase(I_Rx, symb_idx, M, SpS, discard=100):
+    """
+    Scan phase offsets in [0, SpS) and return the one that maximizes
+    the worst-case eye Q-factor (i.e. minimizes ISI penalty).
+    """
+    best_phase, best_Q = 0, -np.inf
+    n_symbols = symb_idx.size
+
+    for phase in range(SpS):
+        I_dec = I_Rx[phase::SpS]
+        # Align lengths (I_dec and symb_idx must match)
+        n = min(I_dec.size, n_symbols)
+        I_dec_p, idx_p = I_dec[:n], symb_idx[:n]
+
+        means = np.array([I_dec_p[idx_p == k][discard:-discard].mean() for k in range(M)])
+        stds  = np.array([I_dec_p[idx_p == k][discard:-discard].std()  for k in range(M)])
+
+        Q = np.min((means[1:] - means[:-1]) / (stds[1:] + stds[:-1]))
+        if Q > best_Q:
+            best_Q, best_phase = Q, phase
+
+    return best_phase
 
 def ber_floor(BER_array, floor=1e-12):
     """Clip a BER array to a minimum floor value to avoid log10(0)."""
