@@ -502,34 +502,83 @@ def sweep_ber_vs_dispersion(dispersion_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
 # 7. PLOT / VISUALIZATION FUNCTIONS
 # =============================================================================
 
-def plot_eye_diagrams(result, discard=50):
+def plot_eye_diagrams(result, discard=50,
+                      save_path_tx=None,
+                      save_path_rx=None,
+                      show=True,
+                      dpi=300):
     """
     Plot Tx and Rx eye diagrams from a run_link() result.
 
-    The Tx eye uses an ideal (noiseless) photodiode applied to the MZM output.
-    The Rx eye uses the actual photodiode current stored in result['I_Rx'].
-
     Parameters
     ----------
-    result  : dict — Output dict from run_link()
-    discard : int  — Number of symbols to discard at each end before plotting
+    result : dict
+        Output dict from run_link().
+    discard : int
+        Number of symbols discarded at both ends.
+    save_path_tx : str or None
+        File path to save Tx eye diagram.
+    save_path_rx : str or None
+        File path to save Rx eye diagram.
+    show : bool
+        Whether to display the figures.
+    dpi : int
+        Figure resolution when saving.
     """
-    SpS    = result['SpS']
+    SpS = result['SpS']
     sigTxo = result['sigTxo']
-    I_Rx   = result['I_Rx']
+    I_Rx = result['I_Rx']
 
-    # Ideal photodiode for Tx eye (no noise, no bandwidth limit)
-    paramPD_ideal       = parameters()
+    paramPD_ideal = parameters()
     paramPD_ideal.ideal = True
-    paramPD_ideal.Fs    = result['Fs']
+    paramPD_ideal.Fs = result['Fs']
+
     I_Tx = photodiode(sigTxo.real, paramPD_ideal)
 
     d = discard * SpS
-    eyediagram(I_Tx[d:-d], I_Tx.size - 2*d, SpS, plotlabel='Tx eye', ptype='fancy')
-    eyediagram(I_Rx[d:-d], I_Rx.size - 2*d, SpS, plotlabel='Rx eye', ptype='fancy')
 
+    # ----- Tx eye -----
+    eyediagram(
+        I_Tx[d:-d],
+        I_Tx.size - 2 * d,
+        SpS,
+        plotlabel='Tx eye',
+        ptype='fancy'
+    )
 
-def plot_ber_vs_power(results_list, labels=None, target_BER=None, title='BER vs Received Power'):
+    if save_path_tx is not None:
+        plt.savefig(save_path_tx, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+    # ----- Rx eye -----
+    eyediagram(
+        I_Rx[d:-d],
+        I_Rx.size - 2 * d,
+        SpS,
+        plotlabel='Rx eye',
+        ptype='fancy'
+    )
+
+    if save_path_rx is not None:
+        plt.savefig(save_path_rx, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def plot_ber_vs_power(
+        results_list,
+        labels=None,
+        target_BER=None,
+        title='BER vs Received Power',
+        save_path=None,
+        show=True,
+        dpi=300):
     """
     Plot BER curves as a function of received optical power.
 
@@ -561,11 +610,22 @@ def plot_ber_vs_power(results_list, labels=None, target_BER=None, title='BER vs 
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.show()
 
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
 
-def plot_ber_vs_bandwidth(results_list, labels=None,
-                          title='BER vs Receiver Bandwidth'):
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def plot_ber_vs_bandwidth(
+        results_list,
+        labels=None,
+        title='BER vs Receiver Bandwidth',
+        save_path=None,
+        show=True,
+        dpi=300):
     """
     Plot BER as a function of receiver bandwidth.
 
@@ -599,10 +659,23 @@ def plot_ber_vs_bandwidth(results_list, labels=None,
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
-def plot_ber_vs_length(results_list, labels=None, title='BER vs Fiber Length'):
+def plot_ber_vs_length(
+        results_list,
+        labels=None,
+        title='BER vs Fiber Length',
+        save_path=None,
+        show=True,
+        dpi=300):
     """
     Plot BER as a function of fiber length.
 
@@ -625,10 +698,22 @@ def plot_ber_vs_length(results_list, labels=None, title='BER vs Fiber Length'):
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.show()
 
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
 
-def plot_ber_vs_dispersion(results_list, labels=None, title='BER vs Fiber Dispersion'):
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def plot_ber_vs_dispersion(
+        results_list,
+        labels=None,
+        title='BER vs Fiber Dispersion',
+        save_path=None,
+        show=True,
+        dpi=300):
     """
     Plot BER as a function of fiber dispersion coefficient.
 
@@ -651,7 +736,14 @@ def plot_ber_vs_dispersion(results_list, labels=None, title='BER vs Fiber Disper
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
 # =============================================================================
