@@ -4,6 +4,15 @@ Dự án này mô phỏng một tuyến thông tin quang IM-DD (Intensity Modula
 
 Mục tiêu của dự án là so sánh hiệu năng của OOK và 4-PAM trong các điều kiện khác nhau của bộ thu và kênh truyền quang.
 
+## Ghi nhận
+
+Đồ án này được phát triển dựa trên thư viện mô phỏng truyền thông quang OptiCommPy.
+
+Một số cấu trúc mô phỏng và quy trình khởi tạo được tham khảo và phát triển từ tài liệu hướng dẫn chính thức cũng như các ví dụ minh họa (example notebooks) của OptiCommPy.
+
+Tài liệu tham khảo:
+- https://opticommpy.readthedocs.io/en/latest/getting_started.html
+- https://github.com/edsonportosilva/OptiCommPy/blob/main/examples/basic_OOK_transmission.ipynb
 ## Nội dung mô phỏng
 
 - Mô phỏng tuyến IM-DD cơ bản.
@@ -19,6 +28,7 @@ Mục tiêu của dự án là so sánh hiệu năng của OOK và 4-PAM trong c
 - `run_all_experiments.py` — main script, chạy toàn bộ nội dung mô phỏng và lưu hình.
 - `imdd_lib.py` — thư viện mô phỏng, bao gồm các khối của hệ thống IM-DD, các hàm khảo sát và vẽ kết quả.
 - `requirements.txt` — danh sách các thư viện Python cần cài đặt để chạy dự án.
+- `main_simulation.ipynb` — notebook phụ trợ dùng để minh họa cách sử dụng thư viện mô phỏng, cấu hình tham số, chạy các thí nghiệm và trực quan hóa kết quả.
 
 ## Cài đặt
 
@@ -48,7 +58,7 @@ python run_all_experiments.py --skip-sanity
 
 ## Kết quả
 
-Script tạo 8 hình PNG trong thư mục output (mặc định `outputs/`):
+Script tạo 8 hình PNG trong thư mục output (mặc định `results/figures`):
 
 | File | Nội dung |
 |---|---|
