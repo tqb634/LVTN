@@ -46,7 +46,7 @@ python run_all_experiments.py
 # Chạy nhanh để kiểm tra pipeline hoạt động (nBits nhỏ, sweep thô — BER sẽ nhiễu, không dùng để lấy số liệu thật)
 python run_all_experiments.py --quick
 
-# Chỉ định thư mục lưu kết quả (mặc định: ./outputs)
+# Chỉ định thư mục lưu kết quả (mặc định: ./results/figures)
 python run_all_experiments.py --output-dir results
 
 # Hiện hình trực tiếp khi chạy (ngoài việc lưu file)
