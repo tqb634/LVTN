@@ -154,17 +154,6 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
     if M not in (2, 4):
         raise ValueError(f"Unsupported modulation order M={M}. Use M=2 (OOK) or M=4 (PAM4).")
 
-    # Optical-to-electrical conversion
-    I_Rx      = photodiode(sigCh, paramPD)
-    I_Rx_full = I_Rx.copy()  # keep full-rate copy for eye diagram
-
-    # Normalize
-    I_Rx = I_Rx / np.std(I_Rx)
-
-    # TODO: Change sampling method to account for chromatic dispersion and receiver filter bandwidth
-    # Sample (one sample per symbol)
-    I_dec = I_Rx[0::SpS]
-
     # Ideal constellation levels in ascending order.
     # OOK : [-1, 1]
     # 4-PAM : [-3, -1, 1, 3]
@@ -175,10 +164,19 @@ def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
 
     # Assign each ideal transmitted symbol to its constellation index (0...M-1).
     # For calculating means and stds.
-    symb_idx = np.argmin(
-        np.abs(symbTx[:, None] - levels[None, :]),
-        axis=1
-    )
+    symb_idx = np.argmin(np.abs(symbTx[:, None] - levels[None, :]), axis=1)
+
+    # Optical-to-electrical conversion
+    I_Rx      = photodiode(sigCh, paramPD)
+    I_Rx_full = I_Rx.copy()  # keep full-rate copy for eye diagram
+
+    # Normalize
+    I_Rx = I_Rx / np.std(I_Rx)
+
+    # Sample (one sample per symbol)
+    #I_dec = I_Rx[0::SpS]
+    best_phase = _find_best_sampling_phase(I_Rx, symb_idx, M, SpS, discard=discard)
+    I_dec = I_Rx[best_phase::SpS]
 
     # Estimate the mean and standard deviation of each received symbol cluster.
     # For computing optimal decision thresholds.
@@ -753,6 +751,13 @@ def _find_best_sampling_phase(I_Rx, symb_idx, M, SpS, discard=100):
     """
     Scan phase offsets in [0, SpS) and return the one that maximizes
     the worst-case eye Q-factor (i.e. minimizes ISI penalty).
+
+    Parameters
+    ----------
+    I_Rx        :
+    symb_idx    :
+    M           :
+    SpS         :
     """
     best_phase, best_Q = 0, -np.inf
     n_symbols = symb_idx.size
