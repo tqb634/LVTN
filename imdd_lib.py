@@ -726,7 +726,11 @@ def plot_ber_vs_dispersion(
 
     plt.figure(figsize=(8, 5))
     for res, label in zip(results_list, labels):
-        plt.plot(res['dispersion'], np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-', label=label)
+        d = res['dispersion']
+        plt.plot(d, np.log10(np.clip(res['Pb'],  1e-12, 1)), '--',
+                 label=f'{label} — Pb (theory)')
+        plt.plot(d, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
+                 label=f'{label} — BER (sim)')
 
     plt.xlabel('Dispersion [ps/nm/km]')
     plt.ylabel('log$_{10}$(BER)')
@@ -749,27 +753,38 @@ def plot_ber_vs_dispersion(
 # =============================================================================
 def _find_best_sampling_phase(I_Rx, symb_idx, M, SpS, discard=100):
     """
-    Scan phase offsets in [0, SpS) and return the one that maximizes
+    Scan phase offsets in [0, SpS)
+    Return the one that maximizes
     the worst-case eye Q-factor (i.e. minimizes ISI penalty).
-
-    Parameters
-    ----------
-    I_Rx        :
-    symb_idx    :
-    M           :
-    SpS         :
     """
     best_phase, best_Q = 0, -np.inf
+
+    # numbers of transmited symbols on TX side
     n_symbols = symb_idx.size
 
     for phase in range(SpS):
+        # Sampling one sample per symbol
         I_dec = I_Rx[phase::SpS]
-        # Align lengths (I_dec and symb_idx must match)
         n = min(I_dec.size, n_symbols)
         I_dec_p, idx_p = I_dec[:n], symb_idx[:n]
 
-        means = np.array([I_dec_p[idx_p == k][discard:-discard].mean() for k in range(M)])
-        stds  = np.array([I_dec_p[idx_p == k][discard:-discard].std()  for k in range(M)])
+        # Remove leading and trailing symbols by discard amount
+        I_dec_p = I_dec_p[discard: n - discard]
+        idx_p   = idx_p[discard: n - discard]
+
+        means = np.full(M, np.nan)
+        stds  = np.full(M, np.nan)
+        valid = True
+        for k in range(M):
+            cls = I_dec_p[idx_p == k]
+            if cls.size < 2:          # not enough points to get a meaningful std
+                valid = False
+                break
+            means[k] = cls.mean()
+            stds[k]  = cls.std()
+
+        if not valid:
+            continue   # skip this phase
 
         Q = np.min((means[1:] - means[:-1]) / (stds[1:] + stds[:-1]))
         if Q > best_Q:
