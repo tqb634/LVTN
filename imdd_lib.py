@@ -303,6 +303,8 @@ def run_link(
 
     sigCh = build_channel(sigTxo, paramCh)
 
+    Prx_dBm = W2dBm(signalPower(sigCh))
+
     rx_result = build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=discard)
 
     # Merge all results into a single dict
@@ -316,6 +318,7 @@ def run_link(
         'Rs'     : Rs,
         'Fs'     : Fs,
         'Pi_dBm' : Pi_dBm,
+        'Prx_dBm': Prx_dBm,
         'M'      : M,
     })
     return result
@@ -347,14 +350,16 @@ def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
     Returns
     -------
     dict:
-        'power' : ndarray — Power sweep values [dBm]
-        'BER'   : ndarray — Simulated BER at each point
-        'Pb'    : ndarray — Theoretical BER at each point
-        'Q'     : ndarray — Q-factor at each point
+        'power'   : ndarray — Power sweep values [dBm]
+        'Prx_dBm' : ndarray — Actual received optical power at the photodiode [dBm],
+        'BER'     : ndarray — Simulated BER at each point
+        'Pb'      : ndarray — Theoretical BER at each point
+        'Q'       : ndarray — Q-factor at each point
     """
     from tqdm import tqdm
 
     power_range = np.asarray(power_range)
+    Prx_dBm = np.zeros(power_range.shape)
     BER = np.zeros(power_range.shape)
     Pb  = np.zeros(power_range.shape)
     Q   = np.zeros(power_range.shape)
@@ -369,8 +374,9 @@ def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
         BER[i] = res['BER']
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
+        Prx_dBm[i] = res['Prx_dBm']
 
-    return {'power': power_range, 'BER': BER, 'Pb': Pb, 'Q': Q}
+    return {'power': power_range, 'Prx_dBm': Prx_dBm, 'BER': BER, 'Pb': Pb, 'Q': Q}
 
 
 def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
@@ -591,7 +597,7 @@ def plot_ber_vs_power(
 
     plt.figure(figsize=(8, 5))
     for res, label in zip(results_list, labels):
-        p = res['power']
+        p = res.get('Prx_dBm', res['power'])
         plt.plot(p, np.log10(np.clip(res['Pb'],  1e-12, 1)), '--',
                  label=f'{label} — Pb (theory)')
         plt.plot(p, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
@@ -601,7 +607,7 @@ def plot_ber_vs_power(
     if target_BER is not None:
         plt.axhline(np.log10(target_BER), color='gray', linestyle=':', label=f'BER = {target_BER}')
 
-    plt.xlabel('Pin [dBm]')
+    plt.xlabel('Received Power [dBm]')
     plt.ylabel('log$_{10}$(BER)')
     plt.title(title)
     plt.ylim(-10, 0)
@@ -796,12 +802,16 @@ def ber_floor(BER_array, floor=1e-12):
     """Clip a BER array to a minimum floor value to avoid log10(0)."""
     return np.clip(BER_array, floor, 1.0)
 
+def W2dBm(P_W):
+    """Convert power from Watts to dBm."""
+    return 10 * np.log10(np.asarray(P_W) * 1e3)
 
 def print_summary(result):
     """Print a concise summary of a single run_link() result."""
     mod_name = 'OOK' if result['M'] == 2 else 'PAM4'
     print(f"  Modulation : M={result['M']} ({mod_name})")
     print(f"  Pi_dBm     : {result['Pi_dBm']:.1f} dBm")
+    print(f"  Prx_dBm    : {result['Prx_dBm']:.1f} dBm")
     print(f"  Symbol rate: {result['Rs']/1e9:.1f} Gbaud")
     print(f"  Q-factor   : {result['Q']:.2f}")
     print(f"  BER (sim)  : {result['BER']:.2e}")
