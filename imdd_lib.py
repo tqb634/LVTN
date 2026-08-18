@@ -301,8 +301,12 @@ def run_link(
         Pi_dBm, M, SpS, Rs, paramBits, paramPulse, paramMZM, seed=seed
     )
 
+    # Optical power launched into the fiber
+    Ptx_dBm = W2dBm(signalPower(sigTxo))
+
     sigCh = build_channel(sigTxo, paramCh)
 
+    # Optical power received at the fiber output
     Prx_dBm = W2dBm(signalPower(sigCh))
 
     rx_result = build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=discard)
@@ -318,6 +322,7 @@ def run_link(
         'Rs'     : Rs,
         'Fs'     : Fs,
         'Pi_dBm' : Pi_dBm,
+        'Ptx_dBm': Ptx_dBm,
         'Prx_dBm': Prx_dBm,
         'M'      : M,
     })
@@ -329,7 +334,7 @@ def run_link(
 # =============================================================================
 
 def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
-                       rx_bandwidth=None, nBits=100000, verbose=True, **kwargs):
+                       rx_bandwidth=None, nBits=100000,save_path=None, verbose=True, **kwargs):
     """
     Sweep BER over a range of received optical power levels.
 
@@ -357,8 +362,10 @@ def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
         'Q'       : ndarray — Q-factor at each point
     """
     from tqdm import tqdm
+    import pandas as pd
 
     power_range = np.asarray(power_range)
+    Ptx_dBm = np.zeros(power_range.shape)
     Prx_dBm = np.zeros(power_range.shape)
     BER = np.zeros(power_range.shape)
     Pb  = np.zeros(power_range.shape)
@@ -374,9 +381,26 @@ def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
         BER[i] = res['BER']
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
+        Ptx_dBm[i] = res['Ptx_dBm']
         Prx_dBm[i] = res['Prx_dBm']
 
-    return {'power': power_range, 'Prx_dBm': Prx_dBm, 'BER': BER, 'Pb': Pb, 'Q': Q}
+    # Create table
+    table = pd.DataFrame({
+        'Pin_dBm': power_range,
+        'Ptx_dBm': Ptx_dBm,
+        'Prx_dBm': Prx_dBm,
+        'BER': BER,
+        'Pb': Pb,
+        'Q': Q
+    })
+
+    # Export if requested
+    if save_path is not None:
+        table.to_csv(save_path, index=False)
+    else:
+        print(table)
+
+    return {'power': power_range,'Ptx_dBm': Ptx_dBm, 'Prx_dBm': Prx_dBm, 'BER': BER, 'Pb': Pb, 'Q': Q}
 
 
 def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
@@ -652,9 +676,15 @@ def plot_ber_vs_bandwidth(
 
         plt.plot(
             bw_GHz,
+            np.log10(np.clip(res['Pb'], 1e-12, 1)),
+            '--',
+            label=f'{label} — Pb (theory)'
+        )
+        plt.plot(
+            bw_GHz,
             np.log10(np.clip(res['BER'], 1e-12, 1)),
             'o-',
-            label=label
+            label=f'{label} — BER (sim)'
         )
 
     plt.xlabel('Receiver Bandwidth [GHz]')
@@ -694,7 +724,11 @@ def plot_ber_vs_length(
 
     plt.figure(figsize=(8, 5))
     for res, label in zip(results_list, labels):
-        plt.plot(res['length'], np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-', label=label)
+        L = res['length']
+        plt.plot(L, np.log10(np.clip(res['Pb'],  1e-12, 1)), '--',
+                 label=f'{label} — Pb (theory)')
+        plt.plot(L, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
+                 label=f'{label} — BER (sim)')
 
     plt.xlabel('Fiber Length [km]')
     plt.ylabel('log$_{10}$(BER)')
