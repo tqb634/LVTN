@@ -30,6 +30,9 @@ from optic.dsp.core import upsample, pulseShape, pnorm, anorm, signalPower
 from optic.utils import parameters, dBm2W
 from optic.plot import eyediagram
 
+import os
+import pandas as pd
+
 try:
     from optic.dsp.coreGPU import checkGPU
     if checkGPU():
@@ -334,7 +337,7 @@ def run_link(
 # =============================================================================
 
 def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
-                       rx_bandwidth=None, nBits=100000,save_path=None, verbose=True, **kwargs):
+                       rx_bandwidth=None, nBits=100000,save_path=None,sheet_name = 'BER-RxPower', verbose=True, **kwargs):
     """
     Sweep BER over a range of received optical power levels.
 
@@ -396,7 +399,7 @@ def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
 
     # Export if requested
     if save_path is not None:
-        table.to_csv(save_path, index=False)
+        save_to_excel_sheet(table, save_path, sheet_name)
     else:
         print(table)
 
@@ -653,6 +656,7 @@ def plot_ber_vs_bandwidth(
         title='BER vs Receiver Bandwidth',
         save_path=None,
         show=True,
+        normalize_bw=False,
         dpi=300):
     """
     Plot BER as a function of receiver bandwidth.
@@ -665,6 +669,9 @@ def plot_ber_vs_bandwidth(
         Legend labels.
     title : str
         Plot title.
+    normalize_bw : bool
+        If True, plot normalized bandwidth B/Rs.
+        If False, plot absolute receiver bandwidth in GHz.
     """
     if labels is None:
         labels = [f'Config {i+1}' for i in range(len(results_list))]
@@ -672,22 +679,28 @@ def plot_ber_vs_bandwidth(
     plt.figure(figsize=(8, 5))
 
     for res, label in zip(results_list, labels):
-        bw_GHz = res['bandwidth'] / 1e9
+
+        norm = res['Rs'] if normalize_bw else 1e9
+        bw = res['bandwidth']/norm # GHz
 
         plt.plot(
-            bw_GHz,
+            bw,
             np.log10(np.clip(res['Pb'], 1e-12, 1)),
             '--',
             label=f'{label} — Pb (theory)'
         )
         plt.plot(
-            bw_GHz,
+            bw,
             np.log10(np.clip(res['BER'], 1e-12, 1)),
             'o-',
             label=f'{label} — BER (sim)'
         )
 
-    plt.xlabel('Receiver Bandwidth [GHz]')
+    if normalize_bw:
+        plt.xlabel('Normalized Receiver Bandwidth (B/Rs)')
+    else:
+        plt.xlabel('Receiver Bandwidth (GHz)')
+
     plt.ylabel(r'$\log_{10}(\mathrm{BER})$')
     plt.title(title)
     plt.grid(True)
@@ -850,3 +863,14 @@ def print_summary(result):
     print(f"  Q-factor   : {result['Q']:.2f}")
     print(f"  BER (sim)  : {result['BER']:.2e}")
     print(f"  Pb (theory): {result['Pb']:.2e}")
+
+def save_to_excel_sheet(table, file_path, sheet_name):
+    """Appends or updates a worksheet in an existing or new Excel workbook."""
+    if not os.path.exists(file_path):
+        # Create a new workbook if it doesn't exist yet
+        with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+            table.to_excel(writer, sheet_name=sheet_name, index=False)
+    else:
+        # Append or replace the sheet in an existing workbook
+        with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            table.to_excel(writer, sheet_name=sheet_name, index=False)
