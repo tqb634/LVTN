@@ -407,7 +407,8 @@ def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
 
 
 def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
-                           fiber_L=10, nBits=100000, verbose=True, **kwargs):
+                           fiber_L=10, nBits=100000, save_path=None,
+                           sheet_name='BER-Bandwidth', verbose=True, **kwargs):
     """
     Sweep BER over a range of receiver bandwidths.
 
@@ -426,6 +427,7 @@ def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         'Q'         : ndarray
     """
     from tqdm import tqdm
+    import pandas as pd
 
     bw_range = np.asarray(bw_range)
     BER = np.zeros(bw_range.shape)
@@ -443,11 +445,26 @@ def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
 
+    # Create table
+    table = pd.DataFrame({
+        'Bandwidth_Hz': bw_range,
+        'BER': BER,
+        'Pb': Pb,
+        'Q': Q
+    })
+
+    # Export if requested
+    if save_path is not None:
+        save_to_excel_sheet(table, save_path, sheet_name)
+    else:
+        print(table)
+
     return {'bandwidth': bw_range, 'BER': BER, 'Pb': Pb, 'Q': Q, 'Rs': Rs}
 
 
 def sweep_ber_vs_fiber_length(length_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
-                               rx_bandwidth=None, nBits=100000, verbose=True, **kwargs):
+                               rx_bandwidth=None, nBits=100000, save_path=None,
+                               sheet_name='BER-FiberLength', verbose=True, **kwargs):
     """
     Sweep BER over a range of fiber lengths.
 
@@ -466,6 +483,7 @@ def sweep_ber_vs_fiber_length(length_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         'Q'      : ndarray
     """
     from tqdm import tqdm
+    import pandas as pd
 
     length_range = np.asarray(length_range)
     BER = np.zeros(length_range.shape)
@@ -483,11 +501,26 @@ def sweep_ber_vs_fiber_length(length_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
 
+    # Create table
+    table = pd.DataFrame({
+        'Length_km': length_range,
+        'BER': BER,
+        'Pb': Pb,
+        'Q': Q
+    })
+
+    # Export if requested
+    if save_path is not None:
+        save_to_excel_sheet(table, save_path, sheet_name)
+    else:
+        print(table)
+
     return {'length': length_range, 'BER': BER, 'Pb': Pb, 'Q': Q}
 
 
 def sweep_ber_vs_dispersion(dispersion_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
                              fiber_L=10, rx_bandwidth=None, nBits=100000,
+                             save_path=None, sheet_name='BER-Dispersion',
                              verbose=True, **kwargs):
     """
     Sweep BER over a range of fiber dispersion coefficients.
@@ -509,6 +542,7 @@ def sweep_ber_vs_dispersion(dispersion_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         'Q'          : ndarray
     """
     from tqdm import tqdm
+    import pandas as pd
 
     dispersion_range = np.asarray(dispersion_range)
     BER = np.zeros(dispersion_range.shape)
@@ -525,6 +559,20 @@ def sweep_ber_vs_dispersion(dispersion_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
         BER[i] = res['BER']
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
+
+    # Create table
+    table = pd.DataFrame({
+        'Dispersion_ps_nm_km': dispersion_range,
+        'BER': BER,
+        'Pb': Pb,
+        'Q': Q
+    })
+
+    # Export if requested
+    if save_path is not None:
+        save_to_excel_sheet(table, save_path, sheet_name)
+    else:
+        print(table)
 
     return {'dispersion': dispersion_range, 'BER': BER, 'Pb': Pb, 'Q': Q}
 
@@ -602,6 +650,7 @@ def plot_eye_diagrams(result, discard=50,
     else:
         plt.close()
 
+
 def plot_ber_vs_power(
         results_list,
         labels=None,
@@ -610,27 +659,18 @@ def plot_ber_vs_power(
         save_path=None,
         show=True,
         dpi=300):
-    """
-    Plot BER curves as a function of received optical power.
-
-    Parameters
-    ----------
-    results_list : list of dict — Each dict is output from sweep_ber_vs_power()
-    labels       : list of str  — Legend labels, e.g. ['OOK', 'PAM4']
-    title        : str          — Plot title
-    """
     if labels is None:
-        labels = [f'Config {i+1}' for i in range(len(results_list))]
+        labels = [f'Config {i + 1}' for i in range(len(results_list))]
 
     plt.figure(figsize=(8, 5))
     for res, label in zip(results_list, labels):
-        p = res.get('Prx_dBm', res['power'])
-        plt.plot(p, np.log10(np.clip(res['Pb'],  1e-12, 1)), '--',
+        # Look for Prx_dBm, Pi_dBm, or legacy power
+        p = res.get('Prx_dBm', res.get('Pi_dBm', res.get('power')))
+        plt.plot(p, np.log10(np.clip(res['Pb'], 1e-12, 1)), '--',
                  label=f'{label} — Pb (theory)')
         plt.plot(p, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
                  label=f'{label} — BER (sim)')
 
-    # Mark FEC threshold if available
     if target_BER is not None:
         plt.axhline(np.log10(target_BER), color='gray', linestyle=':', label=f'BER = {target_BER}')
 
@@ -650,6 +690,7 @@ def plot_ber_vs_power(
     else:
         plt.close()
 
+
 def plot_ber_vs_bandwidth(
         results_list,
         labels=None,
@@ -658,43 +699,23 @@ def plot_ber_vs_bandwidth(
         show=True,
         normalize_bw=False,
         dpi=300):
-    """
-    Plot BER as a function of receiver bandwidth.
-
-    Parameters
-    ----------
-    results_list : list of dict
-        Output dictionaries from sweep_ber_vs_bandwidth().
-    labels : list of str, optional
-        Legend labels.
-    title : str
-        Plot title.
-    normalize_bw : bool
-        If True, plot normalized bandwidth B/Rs.
-        If False, plot absolute receiver bandwidth in GHz.
-    """
     if labels is None:
-        labels = [f'Config {i+1}' for i in range(len(results_list))]
+        labels = [f'Config {i + 1}' for i in range(len(results_list))]
 
     plt.figure(figsize=(8, 5))
 
     for res, label in zip(results_list, labels):
+        # Look for rx_bandwidth or legacy bandwidth
+        bw_raw = res.get('rx_bandwidth', res.get('bandwidth'))
+        rs = res.get('Rs', 10e9)
 
-        norm = res['Rs'] if normalize_bw else 1e9
-        bw = res['bandwidth']/norm # GHz
+        norm = rs if normalize_bw else 1e9
+        bw = bw_raw / norm
 
-        plt.plot(
-            bw,
-            np.log10(np.clip(res['Pb'], 1e-12, 1)),
-            '--',
-            label=f'{label} — Pb (theory)'
-        )
-        plt.plot(
-            bw,
-            np.log10(np.clip(res['BER'], 1e-12, 1)),
-            'o-',
-            label=f'{label} — BER (sim)'
-        )
+        plt.plot(bw, np.log10(np.clip(res['Pb'], 1e-12, 1)), '--',
+                 label=f'{label} — Pb (theory)')
+        plt.plot(bw, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
+                 label=f'{label} — BER (sim)')
 
     if normalize_bw:
         plt.xlabel('Normalized Receiver Bandwidth (B/Rs)')
@@ -723,22 +744,14 @@ def plot_ber_vs_length(
         save_path=None,
         show=True,
         dpi=300):
-    """
-    Plot BER as a function of fiber length.
-
-    Parameters
-    ----------
-    results_list : list of dict — Each dict is output from sweep_ber_vs_fiber_length()
-    labels       : list of str
-    title        : str
-    """
     if labels is None:
-        labels = [f'Config {i+1}' for i in range(len(results_list))]
+        labels = [f'Config {i + 1}' for i in range(len(results_list))]
 
     plt.figure(figsize=(8, 5))
     for res, label in zip(results_list, labels):
-        L = res['length']
-        plt.plot(L, np.log10(np.clip(res['Pb'],  1e-12, 1)), '--',
+        # Look for fiber_L or legacy length
+        L = res.get('fiber_L', res.get('length'))
+        plt.plot(L, np.log10(np.clip(res['Pb'], 1e-12, 1)), '--',
                  label=f'{label} — Pb (theory)')
         plt.plot(L, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
                  label=f'{label} — BER (sim)')
@@ -758,6 +771,7 @@ def plot_ber_vs_length(
     else:
         plt.close()
 
+
 def plot_ber_vs_dispersion(
         results_list,
         labels=None,
@@ -765,22 +779,14 @@ def plot_ber_vs_dispersion(
         save_path=None,
         show=True,
         dpi=300):
-    """
-    Plot BER as a function of fiber dispersion coefficient.
-
-    Parameters
-    ----------
-    results_list : list of dict — Each dict is output from sweep_ber_vs_dispersion()
-    labels       : list of str
-    title        : str
-    """
     if labels is None:
-        labels = [f'Config {i+1}' for i in range(len(results_list))]
+        labels = [f'Config {i + 1}' for i in range(len(results_list))]
 
     plt.figure(figsize=(8, 5))
     for res, label in zip(results_list, labels):
-        d = res['dispersion']
-        plt.plot(d, np.log10(np.clip(res['Pb'],  1e-12, 1)), '--',
+        # Look for fiber_D or legacy dispersion
+        d = res.get('fiber_D', res.get('dispersion'))
+        plt.plot(d, np.log10(np.clip(res['Pb'], 1e-12, 1)), '--',
                  label=f'{label} — Pb (theory)')
         plt.plot(d, np.log10(np.clip(res['BER'], 1e-12, 1)), 'o-',
                  label=f'{label} — BER (sim)')
@@ -874,3 +880,88 @@ def save_to_excel_sheet(table, file_path, sheet_name):
         # Append or replace the sheet in an existing workbook
         with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
             table.to_excel(writer, sheet_name=sheet_name, index=False)
+
+# =============================================================================
+# 8. PROTOTYPING FUNCTIONS
+# =============================================================================
+def sweep_param(param_name, param_range, fixed_params=None, verbose=True, save_path=None, sheet_name=None):
+    """
+    Generic parameter sweep function for IM-DD link simulations.
+
+    Parameters
+    ----------
+    param_name   : str        — Target parameter name in run_link()
+                                 (e.g., 'Pi_dBm', 'rx_bandwidth', 'fiber_L', 'fiber_D')
+    param_range  : array-like — Sequence of values to sweep over.
+    fixed_params : dict       — Fixed keyword arguments forwarded directly to run_link().
+    verbose      : bool       — Display tqdm progress bar.
+    save_path    : str|None   — Path to save Excel file.
+    sheet_name   : str|None   — Excel sheet name (defaults to param_name if None).
+
+    Returns
+    -------
+    dict:
+        param_name : ndarray — Swept values
+        'BER'      : ndarray — Simulated BER
+        'Pb'       : ndarray — Theoretical BER
+        'Q'        : ndarray — Eye Q-factor
+        'Ptx_dBm'  : ndarray — Transmit power
+        'Prx_dBm'  : ndarray — Received power
+    """
+    from tqdm import tqdm
+    import pandas as pd
+
+    if fixed_params is None:
+        fixed_params = {}
+
+    param_range = np.asarray(param_range)
+    N = len(param_range)
+
+    # Pre-allocate arrays
+    BER = np.zeros(N)
+    Pb  = np.zeros(N)
+    Q   = np.zeros(N)
+    Ptx = np.zeros(N)
+    Prx = np.zeros(N)
+
+    iterator = tqdm(enumerate(param_range), total=N,
+                    desc=f'Sweep: {param_name}') if verbose else enumerate(param_range)
+
+    for i, val in iterator:
+        # Construct run arguments dynamically
+        kwargs = fixed_params.copy()
+        kwargs[param_name] = val
+
+        # Handle power seed variation logic
+        if param_name == 'Pi_dBm':
+            kwargs.setdefault('seed', 12335 + i)
+        else:
+            kwargs.setdefault('seed', 12335)
+
+        res = run_link(**kwargs)
+
+        BER[i] = res['BER']
+        Pb[i]  = res['Pb']
+        Q[i]   = res['Q']
+        Ptx[i] = res['Ptx_dBm']
+        Prx[i] = res['Prx_dBm']
+
+    # Package output dictionary
+    res = {
+        param_name: param_range,
+        'BER': BER,
+        'Pb': Pb,
+        'Q': Q,
+        'Ptx_dBm': Ptx,
+        'Prx_dBm': Prx,
+        'Rs': fixed_params.get('Rs', None)  # Save Rs for plot_ber_vs_bandwidth()
+    }
+
+    # Optional Excel export
+    if save_path:
+        df_data = {param_name: param_range, 'Ptx_dBm': Ptx, 'Prx_dBm': Prx, 'BER': BER, 'Pb': Pb, 'Q': Q}
+        table = pd.DataFrame(df_data)
+        save_sheet = sheet_name or f'BER-{param_name}'
+        save_to_excel_sheet(table, save_path, save_sheet)
+
+    return res
