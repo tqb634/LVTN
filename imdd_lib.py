@@ -335,246 +335,88 @@ def run_link(
 # =============================================================================
 # 6. PARAMETER SWEEP FUNCTIONS
 # =============================================================================
-
-def sweep_ber_vs_power(power_range, M=2, Rs=10e9, SpS=16, fiber_L=10,
-                       rx_bandwidth=None, nBits=100000,save_path=None,sheet_name = 'BER-RxPower', verbose=True, **kwargs):
+def sweep_param(param_name, param_range, fixed_params=None, verbose=True, save_path=None, sheet_name=None):
     """
-    Sweep BER over a range of received optical power levels.
-
-    Each power point uses a different RNG seed to avoid statistical correlation.
+    Generic parameter sweep function for IM-DD link simulations.
 
     Parameters
     ----------
-    power_range  : array-like — Input power values [dBm], e.g. np.arange(-30, -14)
-    M            : int        — Modulation order (2 or 4)
-    Rs           : float      — Symbol rate [Hz]
-    SpS          : int        — Samples per symbol
-    fiber_L      : float      — Fiber length [km]
-    rx_bandwidth : float|None — Photodiode bandwidth [Hz] (None = Rs)
-    nBits        : int        — Bits per simulation run
-    verbose      : bool       — Show tqdm progress bar
-    **kwargs                  — Additional arguments forwarded to run_link()
+    param_name   : str        — Target parameter name in run_link()
+                                 (e.g., 'Pi_dBm', 'rx_bandwidth', 'fiber_L', 'fiber_D')
+    param_range  : array-like — Sequence of values to sweep over.
+    fixed_params : dict       — Fixed keyword arguments forwarded directly to run_link().
+    verbose      : bool       — Display tqdm progress bar.
+    save_path    : str|None   — Path to save Excel file.
+    sheet_name   : str|None   — Excel sheet name (defaults to param_name if None).
 
     Returns
     -------
     dict:
-        'power'   : ndarray — Power sweep values [dBm]
-        'Prx_dBm' : ndarray — Actual received optical power at the photodiode [dBm],
-        'BER'     : ndarray — Simulated BER at each point
-        'Pb'      : ndarray — Theoretical BER at each point
-        'Q'       : ndarray — Q-factor at each point
+        param_name : ndarray — Swept values
+        'BER'      : ndarray — Simulated BER
+        'Pb'       : ndarray — Theoretical BER
+        'Q'        : ndarray — Eye Q-factor
+        'Ptx_dBm'  : ndarray — Transmit power
+        'Prx_dBm'  : ndarray — Received power
     """
     from tqdm import tqdm
     import pandas as pd
 
-    power_range = np.asarray(power_range)
-    Ptx_dBm = np.zeros(power_range.shape)
-    Prx_dBm = np.zeros(power_range.shape)
-    BER = np.zeros(power_range.shape)
-    Pb  = np.zeros(power_range.shape)
-    Q   = np.zeros(power_range.shape)
+    if fixed_params is None:
+        fixed_params = {}
 
-    iterator = tqdm(enumerate(power_range), total=len(power_range),
-                    desc='Sweep: power') if verbose else enumerate(power_range)
+    param_range = np.asarray(param_range)
+    N = len(param_range)
 
-    for i, Pi_dBm in iterator:
-        res    = run_link(Pi_dBm=Pi_dBm, M=M, Rs=Rs, SpS=SpS,
-                          fiber_L=fiber_L, rx_bandwidth=rx_bandwidth,
-                          nBits=nBits, seed=12335 + i, **kwargs)
+    # Pre-allocate arrays
+    BER = np.zeros(N)
+    Pb  = np.zeros(N)
+    Q   = np.zeros(N)
+    Ptx = np.zeros(N)
+    Prx = np.zeros(N)
+
+    iterator = tqdm(enumerate(param_range), total=N,
+                    desc=f'Sweep: {param_name}') if verbose else enumerate(param_range)
+
+    for i, val in iterator:
+        # Construct run arguments dynamically
+        kwargs = fixed_params.copy()
+        kwargs[param_name] = val
+
+        # Handle power seed variation logic
+        if param_name == 'Pi_dBm':
+            kwargs.setdefault('seed', 12335 + i)
+        else:
+            kwargs.setdefault('seed', 12335)
+
+        res = run_link(**kwargs)
+
         BER[i] = res['BER']
         Pb[i]  = res['Pb']
         Q[i]   = res['Q']
-        Ptx_dBm[i] = res['Ptx_dBm']
-        Prx_dBm[i] = res['Prx_dBm']
+        Ptx[i] = res['Ptx_dBm']
+        Prx[i] = res['Prx_dBm']
 
-    # Create table
-    table = pd.DataFrame({
-        'Pin_dBm': power_range,
-        'Ptx_dBm': Ptx_dBm,
-        'Prx_dBm': Prx_dBm,
+    # Package output dictionary
+    res = {
+        param_name: param_range,
         'BER': BER,
         'Pb': Pb,
-        'Q': Q
-    })
+        'Q': Q,
+        'Ptx_dBm': Ptx,
+        'Prx_dBm': Prx,
+        'Rs': fixed_params.get('Rs', None)  # Save Rs for plot_ber_vs_bandwidth()
+    }
 
-    # Export if requested
-    if save_path is not None:
-        save_to_excel_sheet(table, save_path, sheet_name)
-    else:
-        print(table)
+    # Optional Excel export
+    if save_path:
+        df_data = {param_name: param_range, 'Ptx_dBm': Ptx, 'Prx_dBm': Prx, 'BER': BER, 'Pb': Pb, 'Q': Q}
+        table = pd.DataFrame(df_data)
+        save_sheet = sheet_name or f'BER-{param_name}'
+        save_to_excel_sheet(table, save_path, save_sheet)
 
-    return {'power': power_range,'Ptx_dBm': Ptx_dBm, 'Prx_dBm': Prx_dBm, 'BER': BER, 'Pb': Pb, 'Q': Q}
+    return res
 
-
-def sweep_ber_vs_bandwidth(bw_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
-                           fiber_L=10, nBits=100000, save_path=None,
-                           sheet_name='BER-Bandwidth', verbose=True, **kwargs):
-    """
-    Sweep BER over a range of receiver bandwidths.
-
-    Parameters
-    ----------
-    bw_range : array-like — Bandwidth values [Hz], e.g. np.linspace(0.5*Rs, 2*Rs, 20)
-    Pi_dBm   : float      — Fixed transmit power [dBm]
-    (remaining parameters same as sweep_ber_vs_power)
-
-    Returns
-    -------
-    dict:
-        'bandwidth' : ndarray — Bandwidth sweep values [Hz]
-        'BER'       : ndarray
-        'Pb'        : ndarray
-        'Q'         : ndarray
-    """
-    from tqdm import tqdm
-    import pandas as pd
-
-    bw_range = np.asarray(bw_range)
-    BER = np.zeros(bw_range.shape)
-    Pb  = np.zeros(bw_range.shape)
-    Q   = np.zeros(bw_range.shape)
-
-    iterator = tqdm(enumerate(bw_range), total=len(bw_range),
-                    desc='Sweep: bandwidth') if verbose else enumerate(bw_range)
-
-    for i, bw in iterator:
-        res    = run_link(Pi_dBm=Pi_dBm, M=M, Rs=Rs, SpS=SpS,
-                          fiber_L=fiber_L, rx_bandwidth=bw,
-                          nBits=nBits, seed=12335, **kwargs)
-        BER[i] = res['BER']
-        Pb[i]  = res['Pb']
-        Q[i]   = res['Q']
-
-    # Create table
-    table = pd.DataFrame({
-        'Bandwidth_Hz': bw_range,
-        'BER': BER,
-        'Pb': Pb,
-        'Q': Q
-    })
-
-    # Export if requested
-    if save_path is not None:
-        save_to_excel_sheet(table, save_path, sheet_name)
-    else:
-        print(table)
-
-    return {'bandwidth': bw_range, 'BER': BER, 'Pb': Pb, 'Q': Q, 'Rs': Rs}
-
-
-def sweep_ber_vs_fiber_length(length_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
-                               rx_bandwidth=None, nBits=100000, save_path=None,
-                               sheet_name='BER-FiberLength', verbose=True, **kwargs):
-    """
-    Sweep BER over a range of fiber lengths.
-
-    Parameters
-    ----------
-    length_range : array-like — Fiber length values [km], e.g. np.arange(0, 80, 5)
-    Pi_dBm       : float      — Fixed transmit power [dBm]
-    (remaining parameters same as sweep_ber_vs_power)
-
-    Returns
-    -------
-    dict:
-        'length' : ndarray — Length sweep values [km]
-        'BER'    : ndarray
-        'Pb'     : ndarray
-        'Q'      : ndarray
-    """
-    from tqdm import tqdm
-    import pandas as pd
-
-    length_range = np.asarray(length_range)
-    BER = np.zeros(length_range.shape)
-    Pb  = np.zeros(length_range.shape)
-    Q   = np.zeros(length_range.shape)
-
-    iterator = tqdm(enumerate(length_range), total=len(length_range),
-                    desc='Sweep: fiber length') if verbose else enumerate(length_range)
-
-    for i, L in iterator:
-        res    = run_link(Pi_dBm=Pi_dBm, M=M, Rs=Rs, SpS=SpS,
-                          fiber_L=L, rx_bandwidth=rx_bandwidth,
-                          nBits=nBits, seed=12335, **kwargs)
-        BER[i] = res['BER']
-        Pb[i]  = res['Pb']
-        Q[i]   = res['Q']
-
-    # Create table
-    table = pd.DataFrame({
-        'Length_km': length_range,
-        'BER': BER,
-        'Pb': Pb,
-        'Q': Q
-    })
-
-    # Export if requested
-    if save_path is not None:
-        save_to_excel_sheet(table, save_path, sheet_name)
-    else:
-        print(table)
-
-    return {'length': length_range, 'BER': BER, 'Pb': Pb, 'Q': Q}
-
-
-def sweep_ber_vs_dispersion(dispersion_range, Pi_dBm=-20, M=2, Rs=10e9, SpS=16,
-                             fiber_L=10, rx_bandwidth=None, nBits=100000,
-                             save_path=None, sheet_name='BER-Dispersion',
-                             verbose=True, **kwargs):
-    """
-    Sweep BER over a range of fiber dispersion coefficients.
-
-    Parameters
-    ----------
-    dispersion_range : array-like — Dispersion values [ps/nm/km],
-                                    e.g. np.arange(0, 20, 1)
-    Pi_dBm           : float      — Fixed transmit power [dBm]
-    fiber_L          : float      — Fixed fiber length [km]
-    (remaining parameters same as sweep_ber_vs_power)
-
-    Returns
-    -------
-    dict:
-        'dispersion' : ndarray — Dispersion sweep values [ps/nm/km]
-        'BER'        : ndarray
-        'Pb'         : ndarray
-        'Q'          : ndarray
-    """
-    from tqdm import tqdm
-    import pandas as pd
-
-    dispersion_range = np.asarray(dispersion_range)
-    BER = np.zeros(dispersion_range.shape)
-    Pb  = np.zeros(dispersion_range.shape)
-    Q   = np.zeros(dispersion_range.shape)
-
-    iterator = tqdm(enumerate(dispersion_range), total=len(dispersion_range),
-                    desc='Sweep: dispersion') if verbose else enumerate(dispersion_range)
-
-    for i, D in iterator:
-        res    = run_link(Pi_dBm=Pi_dBm, M=M, Rs=Rs, SpS=SpS,
-                          fiber_L=fiber_L, fiber_D=D, rx_bandwidth=rx_bandwidth,
-                          nBits=nBits, seed=12335, **kwargs)
-        BER[i] = res['BER']
-        Pb[i]  = res['Pb']
-        Q[i]   = res['Q']
-
-    # Create table
-    table = pd.DataFrame({
-        'Dispersion_ps_nm_km': dispersion_range,
-        'BER': BER,
-        'Pb': Pb,
-        'Q': Q
-    })
-
-    # Export if requested
-    if save_path is not None:
-        save_to_excel_sheet(table, save_path, sheet_name)
-    else:
-        print(table)
-
-    return {'dispersion': dispersion_range, 'BER': BER, 'Pb': Pb, 'Q': Q}
 
 
 # =============================================================================
@@ -884,84 +726,942 @@ def save_to_excel_sheet(table, file_path, sheet_name):
 # =============================================================================
 # 8. PROTOTYPING FUNCTIONS
 # =============================================================================
-def sweep_param(param_name, param_range, fixed_params=None, verbose=True, save_path=None, sheet_name=None):
+def sweep_ber_vs_bw_and_power(bw_range, power_range, M=2, Rs=10e9, SpS=16,
+                               fiber_L=10, nBits=100000, save_path=None,
+                               sheet_name='BER-BW-Power', verbose=True, **kwargs):
     """
-    Generic parameter sweep function for IM-DD link simulations.
+    2-D sweep: BER surface over (receiver bandwidth, transmit/received power).
+
+    This is the "SNR-aware" extension of sweep_ber_vs_bandwidth(): instead of a
+    single BER-vs-bandwidth curve at one fixed power, it runs a full family of
+    curves, one per power level, and additionally extracts the bandwidth that
+    minimizes BER at every power level (B_opt as a function of SNR).
 
     Parameters
     ----------
-    param_name   : str        — Target parameter name in run_link()
-                                 (e.g., 'Pi_dBm', 'rx_bandwidth', 'fiber_L', 'fiber_D')
-    param_range  : array-like — Sequence of values to sweep over.
-    fixed_params : dict       — Fixed keyword arguments forwarded directly to run_link().
-    verbose      : bool       — Display tqdm progress bar.
-    save_path    : str|None   — Path to save Excel file.
-    sheet_name   : str|None   — Excel sheet name (defaults to param_name if None).
+    bw_range    : array-like — Receiver bandwidth values [Hz],
+                                e.g. np.linspace(0.3*Rs, 2*Rs, 20)
+    power_range : array-like — Laser input power values [dBm] used as the SNR
+                                proxy (received power Prx_dBm is recovered from
+                                run_link() and stored, since it is the physically
+                                meaningful SNR axis once fiber_L/alpha are fixed)
+    M           : int        — Modulation order (2 or 4)
+    Rs          : float      — Symbol rate [Hz]
+    SpS         : int        — Samples per symbol
+    fiber_L     : float      — Fiber length [km] (fixed across the sweep)
+    nBits       : int        — Bits per simulation run
+    save_path   : str|None   — Path to save Excel file (long-format table)
+    sheet_name  : str        — Excel sheet name
+    verbose     : bool       — Show tqdm progress bar
+    **kwargs                 — Additional arguments forwarded to run_link()
 
     Returns
     -------
     dict:
-        param_name : ndarray — Swept values
-        'BER'      : ndarray — Simulated BER
-        'Pb'       : ndarray — Theoretical BER
-        'Q'        : ndarray — Eye Q-factor
-        'Ptx_dBm'  : ndarray — Transmit power
-        'Prx_dBm'  : ndarray — Received power
+        'bandwidth' : ndarray (nB,)      — Bandwidth sweep values [Hz]
+        'power'     : ndarray (nP,)      — Input power sweep values [dBm]
+        'Prx_dBm'   : ndarray (nP,)      — Received optical power per power row [dBm]
+        'BER'       : ndarray (nP, nB)   — Simulated BER surface
+        'Pb'        : ndarray (nP, nB)   — Theoretical BER surface
+        'Q'         : ndarray (nP, nB)   — Q-factor surface
+        'B_opt'     : ndarray (nP,)      — argmin_B BER(power, B) per power row [Hz]
+        'BER_opt'   : ndarray (nP,)      — BER value at B_opt for each power row
+        'Rs'        : float              — Symbol rate (for normalized-bandwidth plots)
+        'M'         : int                — Modulation order
     """
     from tqdm import tqdm
     import pandas as pd
 
-    if fixed_params is None:
-        fixed_params = {}
+    bw_range = np.asarray(bw_range)
+    power_range = np.asarray(power_range)
+    nB, nP = len(bw_range), len(power_range)
 
-    param_range = np.asarray(param_range)
-    N = len(param_range)
+    BER = np.zeros((nP, nB))
+    Pb  = np.zeros((nP, nB))
+    Q   = np.zeros((nP, nB))
+    Prx_dBm = np.zeros(nP)
 
-    # Pre-allocate arrays
-    BER = np.zeros(N)
-    Pb  = np.zeros(N)
-    Q   = np.zeros(N)
-    Ptx = np.zeros(N)
-    Prx = np.zeros(N)
+    total = nP * nB
+    pbar = tqdm(total=total, desc='Sweep: BW x Power') if verbose else None
 
-    iterator = tqdm(enumerate(param_range), total=N,
-                    desc=f'Sweep: {param_name}') if verbose else enumerate(param_range)
+    for ip, Pi_dBm in enumerate(power_range):
+        # Same seed reused across bandwidth values within a power row so that
+        # the BW sweep is compared on the same bit/noise realization; the seed
+        # still changes across power rows to avoid correlation between rows.
+        for ib, bw in enumerate(bw_range):
+            res = run_link(Pi_dBm=Pi_dBm, M=M, Rs=Rs, SpS=SpS,
+                            fiber_L=fiber_L, rx_bandwidth=bw,
+                            nBits=nBits, seed=12335 + ip, **kwargs)
+            BER[ip, ib] = res['BER']
+            Pb[ip, ib]  = res['Pb']
+            Q[ip, ib]   = res['Q']
+            if ib == 0:
+                Prx_dBm[ip] = res['Prx_dBm']
+            if pbar is not None:
+                pbar.update(1)
 
-    for i, val in iterator:
-        # Construct run arguments dynamically
-        kwargs = fixed_params.copy()
-        kwargs[param_name] = val
+    if pbar is not None:
+        pbar.close()
 
-        # Handle power seed variation logic
-        if param_name == 'Pi_dBm':
-            kwargs.setdefault('seed', 12335 + i)
-        else:
-            kwargs.setdefault('seed', 12335)
+    # B_opt(power): bandwidth that minimizes simulated BER at each power level
+    B_opt_idx = np.argmin(BER, axis=1)
+    B_opt = bw_range[B_opt_idx]
+    BER_opt = BER[np.arange(nP), B_opt_idx]
 
-        res = run_link(**kwargs)
-
-        BER[i] = res['BER']
-        Pb[i]  = res['Pb']
-        Q[i]   = res['Q']
-        Ptx[i] = res['Ptx_dBm']
-        Prx[i] = res['Prx_dBm']
-
-    # Package output dictionary
-    res = {
-        param_name: param_range,
+    result = {
+        'bandwidth': bw_range,
+        'power': power_range,
+        'Prx_dBm': Prx_dBm,
         'BER': BER,
         'Pb': Pb,
         'Q': Q,
-        'Ptx_dBm': Ptx,
-        'Prx_dBm': Prx,
-        'Rs': fixed_params.get('Rs', None)  # Save Rs for plot_ber_vs_bandwidth()
+        'B_opt': B_opt,
+        'BER_opt': BER_opt,
+        'Rs': Rs,
+        'M': M,
     }
 
-    # Optional Excel export
-    if save_path:
-        df_data = {param_name: param_range, 'Ptx_dBm': Ptx, 'Prx_dBm': Prx, 'BER': BER, 'Pb': Pb, 'Q': Q}
-        table = pd.DataFrame(df_data)
-        save_sheet = sheet_name or f'BER-{param_name}'
-        save_to_excel_sheet(table, save_path, save_sheet)
+    # Optional Excel export (long format: one row per (power, bandwidth) pair)
+    if save_path is not None:
+        bw_grid, p_grid = np.meshgrid(bw_range, power_range)
+        prx_grid = np.repeat(Prx_dBm[:, None], nB, axis=1)
+        table = pd.DataFrame({
+            'Pi_dBm': p_grid.ravel(),
+            'Prx_dBm': prx_grid.ravel(),
+            'Bandwidth_Hz': bw_grid.ravel(),
+            'BER': BER.ravel(),
+            'Pb': Pb.ravel(),
+            'Q': Q.ravel(),
+        })
+        save_to_excel_sheet(table, save_path, sheet_name)
 
-    return res
+    return result
+
+
+def plot_ber_contour_bw_power(
+        result,
+        title='BER Map: Bandwidth vs Received Power',
+        normalize_bw=True,
+        use_sim=True,
+        target_BER=None,
+        show_Bopt=True,
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    2-D contour/heatmap of log10(BER) over (bandwidth, received power), built
+    from the output of sweep_ber_vs_bw_and_power().
+
+    This is the plot that answers "where is B_opt, and how does it move as a
+    function of SNR/received power?" — a single BER-vs-bandwidth curve only
+    shows a 1-D slice of this surface at one fixed power.
+
+    Parameters
+    ----------
+    result       : dict — Output of sweep_ber_vs_bw_and_power()
+    normalize_bw : bool — x-axis in B/Rs (True) or GHz (False)
+    use_sim      : bool — Plot simulated BER surface (True) or theoretical Pb (False)
+    target_BER   : float|None — If given, overlay a contour line at this BER
+                                 (e.g. FEC threshold 1e-3) to show the usable
+                                 (bandwidth, power) region, not just the single
+                                 minimum point.
+    show_Bopt    : bool — Overlay the B_opt(power) trajectory (white dashed line)
+    """
+    bw = result['bandwidth']
+    Rs = result.get('Rs', 10e9)
+    bw_axis = bw / Rs if normalize_bw else bw / 1e9
+
+    y = result['Prx_dBm']
+
+    Z = result['BER'] if use_sim else result['Pb']
+    logZ = np.log10(np.clip(Z, 1e-12, 1))
+
+    plt.figure(figsize=(8, 6))
+    cf = plt.contourf(bw_axis, y, logZ, levels=30, cmap='viridis')
+    cbar = plt.colorbar(cf)
+    cbar.set_label(r'$\log_{10}(\mathrm{BER})$')
+
+    if target_BER is not None:
+        cs = plt.contour(bw_axis, y, logZ, levels=[np.log10(target_BER)],
+                          colors='red', linewidths=2)
+        plt.clabel(cs, fmt=lambda v: f'BER={target_BER:.0e}')
+
+    if show_Bopt:
+        B_opt_axis = result['B_opt'] / Rs if normalize_bw else result['B_opt'] / 1e9
+        plt.plot(B_opt_axis, y, 'w--o', linewidth=2, markersize=4,
+                 label=r'$B_{opt}$(SNR)')
+        plt.legend(loc='best')
+
+    plt.xlabel('Normalized Receiver Bandwidth (B/Rs)' if normalize_bw
+               else 'Receiver Bandwidth (GHz)')
+    plt.ylabel('Received Optical Power [dBm]')
+    plt.title(title)
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_ber_vs_bandwidth_waterfall(
+        result,
+        title='BER vs Bandwidth at Multiple Power Levels',
+        normalize_bw=True,
+        target_BER=None,
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    BER-vs-bandwidth curves for every power level in a sweep_ber_vs_bw_and_power()
+    result, color-coded from low to high received power. Complements
+    plot_ber_contour_bw_power(): easier to compare curve shape / floor / how the
+    optimum region widens or narrows as SNR changes, at the cost of not showing
+    the full continuous surface.
+    """
+    bw = result['bandwidth']
+    Rs = result.get('Rs', 10e9)
+    bw_axis = bw / Rs if normalize_bw else bw / 1e9
+    Prx = result['Prx_dBm']
+
+    plt.figure(figsize=(8, 6))
+    cmap = plt.cm.viridis
+    n = len(Prx)
+    for i, p in enumerate(Prx):
+        color = cmap(i / max(n - 1, 1))
+        plt.plot(bw_axis, np.log10(np.clip(result['BER'][i], 1e-12, 1)),
+                 'o-', color=color, markersize=3, label=f'Prx = {p:.1f} dBm')
+
+    if target_BER is not None:
+        plt.axhline(np.log10(target_BER), color='gray', linestyle=':',
+                    label=f'BER = {target_BER:.0e}')
+
+    plt.xlabel('Normalized Receiver Bandwidth (B/Rs)' if normalize_bw
+               else 'Receiver Bandwidth (GHz)')
+    plt.ylabel(r'$\log_{10}(\mathrm{BER})$')
+    plt.title(title)
+    plt.grid(True)
+    plt.legend(fontsize=8, ncol=2, loc='best')
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def sweep_ber_vs_rate_and_power(rate_range, power_range, M=2, SpS=16,
+                                 fiber_L=10, nBits=100000, save_path=None,
+                                 sheet_name='BER-Rate-Power', verbose=True, **kwargs):
+    """
+    2-D sweep: BER surface over (symbol rate, transmit/received power).
+
+    Analogous to sweep_ber_vs_bw_and_power(), but sweeps the symbol rate Rs
+    instead of the receiver bandwidth. Since rx_bandwidth defaults to Rs
+    (matched filter) whenever it isn't explicitly overridden in **kwargs,
+    this traces the BER-vs-power trade-off as the link is pushed to higher
+    baud rates -- the "how much power do I need to give up to go faster"
+    curve family -- and extracts, for every power level, the rate that
+    minimizes BER (R_opt as a function of SNR).
+
+    Parameters
+    ----------
+    rate_range  : array-like -- Symbol rate values [Hz],
+                                e.g. np.linspace(5e9, 30e9, 20)
+    power_range : array-like -- Laser input power values [dBm] used as the SNR
+                                proxy (received power Prx_dBm is recovered from
+                                run_link() and stored, since it is the physically
+                                meaningful SNR axis once fiber_L/alpha are fixed)
+    M           : int        -- Modulation order (2 or 4)
+    SpS         : int        -- Samples per symbol
+    fiber_L     : float      -- Fiber length [km] (fixed across the sweep)
+    nBits       : int        -- Bits per simulation run
+    save_path   : str|None   -- Path to save Excel file (long-format table)
+    sheet_name  : str        -- Excel sheet name
+    verbose     : bool       -- Show tqdm progress bar
+    **kwargs                 -- Additional arguments forwarded to run_link()
+                                (e.g. rx_bandwidth= to fix an absolute
+                                receiver bandwidth instead of tracking Rs)
+
+    Returns
+    -------
+    dict:
+        'rate'      : ndarray (nR,)      -- Symbol rate sweep values [Hz]
+        'power'     : ndarray (nP,)      -- Input power sweep values [dBm]
+        'Prx_dBm'   : ndarray (nP,)      -- Received optical power per power row [dBm]
+        'BER'       : ndarray (nP, nR)   -- Simulated BER surface
+        'Pb'        : ndarray (nP, nR)   -- Theoretical BER surface
+        'Q'         : ndarray (nP, nR)   -- Q-factor surface
+        'R_opt'     : ndarray (nP,)      -- argmin_R BER(power, R) per power row [Hz]
+        'BER_opt'   : ndarray (nP,)      -- BER value at R_opt for each power row
+        'M'         : int                -- Modulation order
+    """
+    from tqdm import tqdm
+    import pandas as pd
+
+    rate_range = np.asarray(rate_range)
+    power_range = np.asarray(power_range)
+    nR, nP = len(rate_range), len(power_range)
+
+    BER = np.zeros((nP, nR))
+    Pb  = np.zeros((nP, nR))
+    Q   = np.zeros((nP, nR))
+    Prx_dBm = np.zeros(nP)
+
+    total = nP * nR
+    pbar = tqdm(total=total, desc='Sweep: Rate x Power') if verbose else None
+
+    for ip, Pi_dBm in enumerate(power_range):
+        # Same seed reused across rate values within a power row so that
+        # the rate sweep is compared on the same bit/noise realization; the
+        # seed still changes across power rows to avoid correlation between rows.
+        for ir, Rs in enumerate(rate_range):
+            res = run_link(Pi_dBm=Pi_dBm, M=M, Rs=Rs, SpS=SpS,
+                            fiber_L=fiber_L,
+                            nBits=nBits, seed=12335 + ip, **kwargs)
+            BER[ip, ir] = res['BER']
+            Pb[ip, ir]  = res['Pb']
+            Q[ip, ir]   = res['Q']
+            if ir == 0:
+                Prx_dBm[ip] = res['Prx_dBm']
+            if pbar is not None:
+                pbar.update(1)
+
+    if pbar is not None:
+        pbar.close()
+
+    # R_opt(power): symbol rate that minimizes simulated BER at each power level
+    R_opt_idx = np.argmin(BER, axis=1)
+    R_opt = rate_range[R_opt_idx]
+    BER_opt = BER[np.arange(nP), R_opt_idx]
+
+    result = {
+        'rate': rate_range,
+        'power': power_range,
+        'Prx_dBm': Prx_dBm,
+        'BER': BER,
+        'Pb': Pb,
+        'Q': Q,
+        'R_opt': R_opt,
+        'BER_opt': BER_opt,
+        'M': M,
+    }
+
+    # Optional Excel export (long format: one row per (power, rate) pair)
+    if save_path is not None:
+        r_grid, p_grid = np.meshgrid(rate_range, power_range)
+        prx_grid = np.repeat(Prx_dBm[:, None], nR, axis=1)
+        table = pd.DataFrame({
+            'Pi_dBm': p_grid.ravel(),
+            'Prx_dBm': prx_grid.ravel(),
+            'Rate_Hz': r_grid.ravel(),
+            'BER': BER.ravel(),
+            'Pb': Pb.ravel(),
+            'Q': Q.ravel(),
+        })
+        save_to_excel_sheet(table, save_path, sheet_name)
+
+    return result
+
+
+def plot_ber_contour_rate_power(
+        result,
+        title='BER Map: Symbol Rate vs Received Power',
+        rate_unit='Gbaud',
+        use_sim=True,
+        target_BER=None,
+        show_Ropt=True,
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    2-D contour/heatmap of log10(BER) over (symbol rate, received power),
+    built from the output of sweep_ber_vs_rate_and_power().
+
+    This is the plot that answers "how much received power do I need to hit
+    a target BER at a given baud rate, and where does the usable region
+    shrink as I push the rate up?" -- a single BER-vs-power curve only shows
+    a 1-D slice of this surface at one fixed rate.
+
+    Parameters
+    ----------
+    result      : dict -- Output of sweep_ber_vs_rate_and_power()
+    rate_unit   : str  -- 'Gbaud' (Rs/1e9) or 'Gbps' (Rs*log2(M)/1e9) for the x-axis
+    use_sim     : bool -- Plot simulated BER surface (True) or theoretical Pb (False)
+    target_BER  : float|None -- If given, overlay a contour line at this BER
+                                (e.g. FEC threshold 1e-3) to show the usable
+                                (rate, power) region, not just the single
+                                minimum point.
+    show_Ropt   : bool -- Overlay the R_opt(power) trajectory (white dashed line)
+    """
+    Rs_arr = result['rate']
+    M = result.get('M', 2)
+    bits_per_symb = np.log2(M)
+
+    if rate_unit.lower() == 'gbps':
+        scale = bits_per_symb / 1e9
+        xlabel = 'Bit Rate (Gbps)'
+    else:
+        scale = 1 / 1e9
+        xlabel = 'Symbol Rate (Gbaud)'
+
+    rate_axis = Rs_arr * scale
+    y = result['Prx_dBm']
+
+    Z = result['BER'] if use_sim else result['Pb']
+    logZ = np.log10(np.clip(Z, 1e-12, 1))
+
+    plt.figure(figsize=(8, 6))
+    cf = plt.contourf(rate_axis, y, logZ, levels=30, cmap='viridis')
+    cbar = plt.colorbar(cf)
+    cbar.set_label(r'$\log_{10}(\mathrm{BER})$')
+
+    if target_BER is not None:
+        cs = plt.contour(rate_axis, y, logZ, levels=[np.log10(target_BER)],
+                          colors='red', linewidths=2)
+        plt.clabel(cs, fmt=lambda v: f'BER={target_BER:.0e}')
+
+    if show_Ropt:
+        R_opt_axis = result['R_opt'] * scale
+        plt.plot(R_opt_axis, y, 'w--o', linewidth=2, markersize=4,
+                 label=r'$R_{opt}$(SNR)')
+        plt.legend(loc='best')
+
+    plt.xlabel(xlabel)
+    plt.ylabel('Received Optical Power [dBm]')
+    plt.title(title)
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_ber_vs_rate_waterfall(
+        result,
+        title=None,
+        x_axis='power',
+        rate_unit='Gbaud',
+        target_BER=None,
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    Waterfall of BER curves from a sweep_ber_vs_rate_and_power() result.
+    Complements plot_ber_contour_rate_power(): easier to compare curve
+    shape/floor at the cost of not showing the full continuous surface.
+
+    Parameters
+    ----------
+    result     : dict — Output of sweep_ber_vs_rate_and_power()
+    x_axis     : str  — 'power' (default): x = received optical power
+                                [dBm], one curve per swept rate, color-coded
+                                low-to-high rate. This is the classic BER
+                                waterfall (BER vs Prx).
+                         'rate' : x = symbol/bit rate, one curve per swept
+                                power, color-coded low-to-high power.
+    rate_unit  : str  — 'Gbaud' (Rs/1e9) or 'Gbps' (Rs*log2(M)/1e9), used
+                         whenever rate appears (as the x-axis or in labels).
+    target_BER : float|None — If given, overlay a horizontal BER threshold line.
+    """
+    Rs_arr = result['rate']
+    M = result.get('M', 2)
+    bits_per_symb = np.log2(M)
+    Prx = result['Prx_dBm']
+    BER = result['BER']
+
+    if rate_unit.lower() == 'gbps':
+        rate_scale = bits_per_symb / 1e9
+        rate_label = 'Bit Rate (Gbps)'
+    else:
+        rate_scale = 1 / 1e9
+        rate_label = 'Symbol Rate (Gbaud)'
+    rate_axis = Rs_arr * rate_scale
+
+    plt.figure(figsize=(8, 6))
+    cmap = plt.cm.viridis
+
+    if x_axis.lower() == 'power':
+        # x = Prx_dBm, one curve per rate
+        n = len(rate_axis)
+        for i in range(n):
+            color = cmap(i / max(n - 1, 1))
+            plt.plot(Prx, np.log10(np.clip(BER[:, i], 1e-12, 1)),
+                     'o-', color=color, markersize=3,
+                     label=f'{rate_axis[i]:.1f} {rate_unit}')
+        xlabel = 'Received Optical Power [dBm]'
+        default_title = 'BER vs Received Power at Multiple Rates'
+    else:
+        # x = rate, one curve per power (original behavior)
+        n = len(Prx)
+        for i, p in enumerate(Prx):
+            color = cmap(i / max(n - 1, 1))
+            plt.plot(rate_axis, np.log10(np.clip(BER[i], 1e-12, 1)),
+                     'o-', color=color, markersize=3, label=f'Prx = {p:.1f} dBm')
+        xlabel = rate_label
+        default_title = 'BER vs Symbol Rate at Multiple Power Levels'
+
+    if target_BER is not None:
+        plt.axhline(np.log10(target_BER), color='gray', linestyle=':',
+                    label=f'BER = {target_BER:.0e}')
+
+    plt.xlabel(xlabel)
+    plt.ylabel(r'$\log_{10}(\mathrm{BER})$')
+    plt.title(title if title is not None else default_title)
+    plt.grid(True)
+    plt.legend(fontsize=8, ncol=2, loc='best')
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def sweep_dlimit_vs_length_and_rate(length_range, rate_range, M=2,
+                                     save_path=None,
+                                     sheet_name='Dlimit-Length-Rate'):
+    """
+    2-D map of the dispersion-limited tolerance D_limit(length, rate),
+    computed analytically (no link simulation) from the classical GVD
+    pulse-broadening rule of thumb:
+
+        D_limit = 100000 / (Rs_Gbaud^2 * L)
+
+    where Rs_Gbaud is the *symbol* rate in Gbaud, L is the fiber length in
+    km, and D_limit comes out in ps/nm/km. Equivalently, this is the usual
+    dispersion-limited-distance relation L_max = 1e5 / (D * Rs^2) solved
+    for D instead of L.
+
+    IMPORTANT: the rule of thumb bounds pulse broadening relative to the
+    *symbol* (baud) period, not the bit period, so it must be applied to
+    Rs, not to the bit rate Rs*log2(M). This is what lets M-PAM show its
+    expected advantage over OOK at equal bit rate: at the same bit rate,
+    M-PAM's lower baud rate gives longer symbols and therefore a higher
+    D_limit than OOK. M is kept only as metadata for converting the rate
+    axis to Gbps in plot_dlimit_waterfall() -- it does not enter this
+    formula.
+
+    This plays the same role as sweep_ber_vs_rate_and_power() /
+    sweep_dlimit_vs_length_and_rate()'s simulation-based counterpart, but
+    is a closed-form estimate rather than a BER sweep -- useful as a fast
+    sanity-check curve to compare against simulated results.
+
+    Parameters
+    ----------
+    length_range : array-like -- Fiber length values [km], e.g. np.linspace(1, 80, 10)
+    rate_range    : array-like -- Symbol rate values [Hz], e.g. np.linspace(5e9, 30e9, 6)
+    M             : int        -- Modulation order (2 or 4); stored as metadata for
+                                   Gbps-axis conversion in plot_dlimit_waterfall(),
+                                   not used in the D_limit formula itself.
+    save_path     : str|None   -- Path to save Excel file (long-format D_limit table)
+    sheet_name    : str        -- Excel sheet name
+
+    Returns
+    -------
+    dict:
+        'length'  : ndarray (nL,)    -- Fiber length sweep values [km]
+        'rate'    : ndarray (nR,)    -- Symbol rate sweep values [Hz]
+        'D_limit' : ndarray (nL, nR) -- Dispersion tolerance [ps/nm/km]
+        'M'       : int
+    """
+    import pandas as pd
+
+    length_range = np.asarray(length_range)
+    rate_range   = np.asarray(rate_range)
+
+    Rs_Gbaud = rate_range / 1e9    # symbol rate in Gbaud, shape (nR,)
+    L_km     = length_range        # shape (nL,)
+
+    # D_limit[il, ir] = 1e5 / (Rs_Gbaud[ir]^2 * L_km[il])
+    D_limit = 1e5 / (Rs_Gbaud[None, :] ** 2 * L_km[:, None])
+
+    result = {
+        'length': length_range,
+        'rate': rate_range,
+        'D_limit': D_limit,
+        'M': M,
+    }
+
+    # Optional Excel export (long format: one row per (length, rate) pair)
+    if save_path is not None:
+        l_grid, r_grid = np.meshgrid(length_range, rate_range, indexing='ij')
+        table = pd.DataFrame({
+            'Length_km': l_grid.ravel(),
+            'Rate_Hz': r_grid.ravel(),
+            'D_limit_ps_nm_km': D_limit.ravel(),
+        })
+        save_to_excel_sheet(table, save_path, sheet_name)
+
+    return result
+
+
+def plot_dlimit_waterfall(
+        result,
+        title=None,
+        x_axis='length',
+        rate_unit='Gbaud',
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    Waterfall of dispersion-tolerance curves from a
+    sweep_dlimit_vs_length_and_rate() result.
+
+    Mirrors plot_ber_vs_rate_waterfall(): instead of log10(BER) on the
+    y-axis, this plots D_limit = 1e5 / (B_Gbps^2 * L_km) -- the max
+    tolerable dispersion parameter under the GVD pulse-broadening rule of
+    thumb -- giving the classic "dispersion-limited reach" family of curves.
+
+    Parameters
+    ----------
+    result     : dict -- Output of sweep_dlimit_vs_length_and_rate()
+    x_axis     : str  -- 'length' (default): x = fiber length [km], one curve
+                                per swept rate, color-coded low-to-high rate.
+                         'rate'  : x = symbol/bit rate, one curve per swept
+                                length, color-coded low-to-high length.
+    rate_unit  : str  -- 'Gbaud' (Rs/1e9) or 'Gbps' (Rs*log2(M)/1e9), used
+                         whenever rate appears (as the x-axis or in labels).
+    """
+    length_axis = result['length']
+    Rs_arr = result['rate']
+    M = result.get('M', 2)
+    bits_per_symb = np.log2(M)
+    D_limit = result['D_limit']
+
+    if rate_unit.lower() == 'gbps':
+        rate_scale = bits_per_symb / 1e9
+        rate_label = 'Bit Rate (Gbps)'
+    else:
+        rate_scale = 1 / 1e9
+        rate_label = 'Symbol Rate (Gbaud)'
+    rate_axis = Rs_arr * rate_scale
+
+    plt.figure(figsize=(8, 6))
+    cmap = plt.cm.viridis
+
+    if x_axis.lower() == 'length':
+        # x = fiber length, one curve per rate
+        n = len(rate_axis)
+        for i in range(n):
+            color = cmap(i / max(n - 1, 1))
+            plt.plot(length_axis, D_limit[:, i],
+                     'o-', color=color, markersize=3,
+                     label=f'{rate_axis[i]:.1f} {rate_unit}')
+        xlabel = 'Fiber Length [km]'
+        default_title = 'Dispersion Tolerance vs Length at Multiple Rates'
+    else:
+        # x = rate, one curve per length
+        n = len(length_axis)
+        for i, L in enumerate(length_axis):
+            color = cmap(i / max(n - 1, 1))
+            plt.plot(rate_axis, D_limit[i, :],
+                     'o-', color=color, markersize=3, label=f'L = {L:.1f} km')
+        xlabel = rate_label
+        default_title = 'Dispersion Tolerance vs Rate at Multiple Lengths'
+
+    plt.xlabel(xlabel)
+    plt.ylabel(r'$D_{limit}$ [ps/nm/km]')
+    plt.title(title if title is not None else default_title)
+    plt.grid(True)
+    plt.legend(fontsize=8, ncol=2, loc='best')
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def sweep_lmax_vs_rate_and_power(
+        Rb_range_Gbps, Pi_range_dBm, M=2, SpS=16,
+        fiber_alpha=0.2, fiber_D=18, Fc=193.1e12,
+        nBits=200000, target_BER=1e-3,
+        L_min=0.5, L_max_search=100.0, L_tol=0.25, max_iter=25,
+        verbose=True, save_path=None, sheet_name='Lmax-Rb-Pi', **kwargs):
+    """
+    Determine the maximum transmission distance Lmax(Rb, Pi) for which the
+    system still meets the target quality level (BER <= target_BER), swept
+    jointly over:
+
+        - Bit rate Rb    [Gb/s]  (row axis, Rb_range_Gbps)
+        - Launch power Pi [dBm]  (column axis, Pi_range_dBm)
+
+    at a fixed fiber dispersion parameter D (default D = 18 ps/nm/km, the
+    realistic-case value).
+
+    Approach: BER increases monotonically with fiber length L (attenuation
+    reduces received power -> lower SNR, while dispersion-induced ISI also
+    grows with L), so for every (Rb, Pi) pair a bisection search on L is
+    used to locate the point where BER(L) crosses target_BER, instead of a
+    dense (and much more expensive) sweep over L.
+
+    Parameters
+    ----------
+    Rb_range_Gbps : array-like -- Bit rate values to sweep [Gb/s], e.g. 10 -> 100 Gb/s
+    Pi_range_dBm  : array-like -- Launch power (MZM input) values to sweep [dBm],
+                                   e.g. -14 -> 0 dBm
+    M             : int        -- Modulation order (2 = OOK, 4 = PAM4).
+                                   Rs = Rb / log2(M) is derived from Rb.
+    SpS           : int        -- Samples per symbol
+    fiber_alpha   : float      -- Fiber attenuation [dB/km]
+    fiber_D       : float      -- Fiber dispersion parameter [ps/nm/km]
+                                   (default 18 -- realistic case)
+    Fc            : float      -- Central optical frequency [Hz]
+    nBits         : int        -- Number of bits simulated per run_link() call
+                                   (should be large enough for a reliable
+                                   BER ~ 1e-3 estimate)
+    target_BER    : float      -- Target BER threshold (default 1e-3)
+    L_min         : float      -- Lower search bound for L [km]
+    L_max_search  : float      -- Upper search bound for L [km]. If BER is
+                                   still <= target_BER right at L_max_search,
+                                   Lmax is treated as censored (right-bounded)
+                                   at this value -- see is_censored.
+    L_tol         : float      -- Length resolution at which bisection stops [km]
+    max_iter      : int        -- Maximum number of bisection iterations
+    verbose       : bool       -- Show tqdm progress bar
+    save_path     : str|None   -- Path to save Excel file (long-format table)
+    sheet_name    : str        -- Excel sheet name
+    **kwargs                   -- Additional arguments forwarded to run_link()
+                                   (e.g. rx_bandwidth=, rx_ideal=, ...)
+
+    Returns
+    -------
+    dict:
+        'Rb_Gbps'     : ndarray (nRb,)      -- Swept bit-rate axis [Gb/s]
+        'Pi_dBm'      : ndarray (nPi,)      -- Swept launch-power axis [dBm]
+        'Lmax_km'     : ndarray (nRb, nPi)  -- Maximum transmission distance [km]
+        'BER_at_Lmax' : ndarray (nRb, nPi)  -- Simulated BER at Lmax
+        'is_censored' : ndarray (nRb, nPi) bool
+                                             -- True if Lmax is right-bounded by
+                                                L_max_search (target BER still
+                                                met at the search's upper bound)
+                                                rather than a true crossing point
+        'M'           : int
+        'fiber_D'     : float
+        'target_BER'  : float
+    """
+    from tqdm import tqdm
+    import pandas as pd
+
+    Rb_range_Gbps = np.asarray(Rb_range_Gbps, dtype=float)
+    Pi_range_dBm = np.asarray(Pi_range_dBm, dtype=float)
+    nRb, nPi = len(Rb_range_Gbps), len(Pi_range_dBm)
+
+    bits_per_symb = np.log2(M)
+
+    Lmax = np.full((nRb, nPi), np.nan)
+    BER_at_Lmax = np.full((nRb, nPi), np.nan)
+    is_censored = np.zeros((nRb, nPi), dtype=bool)
+
+    total = nRb * nPi
+    pbar = tqdm(total=total, desc='Sweep: Lmax(Rb, Pi)') if verbose else None
+
+    for ib, Rb_Gbps in enumerate(Rb_range_Gbps):
+        Rs = Rb_Gbps * 1e9 / bits_per_symb  # symbol rate [Hz] corresponding to Rb
+
+        for ip, Pi_dBm in enumerate(Pi_range_dBm):
+            # Seed fixed per (Rb, Pi) grid cell so the bisection over L reuses
+            # the same bit/noise realization -> a cleaner monotonic BER(L).
+            seed = 12335 + ib * nPi + ip
+
+            def ber_at_length(L, _Rs=Rs, _Pi=Pi_dBm, _seed=seed):
+                res = run_link(
+                    Pi_dBm=_Pi, M=M, SpS=SpS, Rs=_Rs,
+                    fiber_L=L, fiber_alpha=fiber_alpha, fiber_D=fiber_D,
+                    Fc=Fc, nBits=nBits, seed=_seed, **kwargs
+                )
+                return res['BER']
+
+            # --- Lower bound: if BER already exceeds the target at L_min,
+            # the system cannot meet the target BER at any distance -> Lmax = 0
+            ber_lo = ber_at_length(L_min)
+            if ber_lo > target_BER:
+                Lmax[ib, ip] = 0.0
+                BER_at_Lmax[ib, ip] = ber_lo
+                if pbar is not None:
+                    pbar.update(1)
+                continue
+
+            # --- Upper bound: if BER still meets the target at L_max_search,
+            # Lmax >= L_max_search (censored / right-bounded result)
+            lo, hi = L_min, L_max_search
+            ber_hi = ber_at_length(hi)
+            if ber_hi <= target_BER:
+                Lmax[ib, ip] = hi
+                BER_at_Lmax[ib, ip] = ber_hi
+                is_censored[ib, ip] = True
+                if pbar is not None:
+                    pbar.update(1)
+                continue
+
+            # --- Bisection search for the point where BER(L) = target_BER ---
+            for _ in range(max_iter):
+                if hi - lo <= L_tol:
+                    break
+                mid = 0.5 * (lo + hi)
+                ber_mid = ber_at_length(mid)
+                if ber_mid <= target_BER:
+                    lo = mid
+                else:
+                    hi = mid
+
+            Lmax[ib, ip] = lo
+            BER_at_Lmax[ib, ip] = ber_at_length(lo)
+
+            if pbar is not None:
+                pbar.update(1)
+
+    if pbar is not None:
+        pbar.close()
+
+    result = {
+        'Rb_Gbps': Rb_range_Gbps,
+        'Pi_dBm': Pi_range_dBm,
+        'Lmax_km': Lmax,
+        'BER_at_Lmax': BER_at_Lmax,
+        'is_censored': is_censored,
+        'M': M,
+        'fiber_D': fiber_D,
+        'target_BER': target_BER,
+    }
+
+    # Optional Excel export (long format: one row per (Rb, Pi) pair)
+    if save_path is not None:
+        rb_grid, pi_grid = np.meshgrid(Rb_range_Gbps, Pi_range_dBm, indexing='ij')
+        table = pd.DataFrame({
+            'Rb_Gbps': rb_grid.ravel(),
+            'Pi_dBm': pi_grid.ravel(),
+            'Lmax_km': Lmax.ravel(),
+            'BER_at_Lmax': BER_at_Lmax.ravel(),
+            'is_censored': is_censored.ravel(),
+        })
+        save_to_excel_sheet(table, save_path, sheet_name)
+
+    return result
+
+
+def plot_lmax_waterfall(
+        result,
+        title=None,
+        x_axis='rate',
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    Plot a waterfall of Lmax curves from a sweep_lmax_vs_rate_and_power() result.
+
+    Parameters
+    ----------
+    result  : dict -- Output of sweep_lmax_vs_rate_and_power()
+    x_axis  : str  -- 'rate'  (default): x = bit rate Rb [Gb/s], one curve
+                               per launch power Pi, color-coded low-to-high.
+                       'power': x = launch power Pi [dBm], one curve per
+                               bit rate Rb.
+    """
+    Rb = result['Rb_Gbps']
+    Pi = result['Pi_dBm']
+    Lmax = result['Lmax_km']
+    target_BER = result.get('target_BER')
+    D = result.get('fiber_D')
+
+    plt.figure(figsize=(8, 6))
+    cmap = plt.cm.viridis
+
+    if x_axis.lower() == 'power':
+        n = len(Rb)
+        for i in range(n):
+            color = cmap(i / max(n - 1, 1))
+            plt.plot(Pi, Lmax[i, :], 'o-', color=color, markersize=3,
+                     label=f'Rb = {Rb[i]:.0f} Gb/s')
+        xlabel = 'Launch Power Pi [dBm]'
+        default_title = 'Maximum Reach Lmax vs Launch Power'
+    else:
+        n = len(Pi)
+        for i, p in enumerate(Pi):
+            color = cmap(i / max(n - 1, 1))
+            plt.plot(Rb, Lmax[:, i], 'o-', color=color, markersize=3,
+                     label=f'Pi = {p:.1f} dBm')
+        xlabel = 'Bit Rate Rb [Gb/s]'
+        default_title = 'Maximum Reach Lmax vs Bit Rate'
+
+    subtitle = ''
+    if D is not None:
+        subtitle += f' (D = {D:.0f} ps/nm/km'
+    if target_BER is not None:
+        subtitle += f', target BER = {target_BER:.0e}' if subtitle else \
+            f' (target BER = {target_BER:.0e}'
+    if subtitle:
+        subtitle += ')'
+
+    plt.xlabel(xlabel)
+    plt.ylabel(r'$L_{max}$ [km]')
+    plt.title((title if title is not None else default_title) + subtitle)
+    plt.grid(True)
+    plt.legend(fontsize=8, ncol=2, loc='best')
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_lmax_contour(
+        result,
+        title=None,
+        save_path=None,
+        show=True,
+        dpi=300):
+    """
+    Plot a contour/heatmap map of Lmax(Rb, Pi) from a
+    sweep_lmax_vs_rate_and_power() result. Gives an overall view of the
+    usable (Rb, Pi) region and the corresponding maximum reach across the
+    full swept plane, instead of only 1-D slices as in plot_lmax_waterfall().
+    """
+    Rb = result['Rb_Gbps']
+    Pi = result['Pi_dBm']
+    Lmax = result['Lmax_km']
+    D = result.get('fiber_D')
+    target_BER = result.get('target_BER')
+
+    plt.figure(figsize=(8, 6))
+    cf = plt.contourf(Rb, Pi, Lmax.T, levels=30, cmap='viridis')
+    cbar = plt.colorbar(cf)
+    cbar.set_label(r'$L_{max}$ [km]')
+
+    plt.xlabel('Bit Rate Rb [Gb/s]')
+    plt.ylabel('Launch Power Pi [dBm]')
+
+    default_title = 'Maximum Reach Map Lmax(Rb, Pi)'
+    if D is not None:
+        default_title += f'\nD = {D:.0f} ps/nm/km'
+    if target_BER is not None:
+        default_title += f', target BER = {target_BER:.0e}'
+    plt.title(title if title is not None else default_title)
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
