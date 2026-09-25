@@ -47,7 +47,10 @@ Toàn bộ kết quả mô phỏng, hình ảnh biểu đồ đồ thị (PNG) v
 
 ## Kết luận Trade-off chính
 
-1. **Độ nhạy thu & Công suất**: OOK có độ nhạy thu tốt hơn 4-PAM (power penalty của 4-PAM khoảng 4 dB tại 10 Gb/s để đạt $\text{BER} = 10^{-3}$).
-2. **Băng thông phần cứng**: 4-PAM tiết kiệm băng thông ký hiệu ($R_s = R_b/2$), giúp hoạt động tốt hơn OOK ở tốc độ bit cao khi phần cứng bị giới hạn băng thông.
-3. **Khả năng chịu tán sắc**: Giới hạn chịu tán sắc $D_{limit}$ của 4-PAM cao hơn OOK khoảng 4 lần ở cùng tốc độ bit và chiều dài sợi.
-4. **Cự ly truyền dẫn ($L_{max}$)**: OOK vượt trội ở tốc độ vừa và thấp ($10 - 20 \text{ Gb/s}$) trong tuyến bị giới hạn bởi suy hao. Ở tốc độ rất cao (vùng bị giới hạn bởi tán sắc), $L_{max}$ của cả hai định dạng đều suy giảm và hội tụ về mức thấp dưới $10 \text{ km}$.
+> Các kết luận dưới đây áp dụng cho hệ thống IM-DD cơ bản, **chưa** tích hợp các khối cân bằng kênh (Equalization/DSP nâng cao như FFE/DFE) hay mã sửa lỗi trước FEC thực tế.
+
+1. **Độ nhạy thu & Công suất**: OOK có độ nhạy thu tốt hơn 4-PAM (power penalty của 4-PAM khoảng 4 dB tại 10 Gb/s để đạt $\text{BER} = 10^{-3}$), do khoảng cách giữa các mức biên độ liền kề của 4-PAM nhỏ hơn OOK.
+2. **Băng thông phần cứng**: 4-PAM tiết kiệm băng thông ký hiệu ($R_s = R_b/2$), giúp hoạt động tốt hơn OOK ở tốc độ bit cao khi phần cứng (laser, photodiode, driver) bị giới hạn băng thông (ví dụ dải 40–100 Gb/s).
+3. **Khả năng chịu tán sắc**: Giới hạn chịu tán sắc $D_{limit}$ của 4-PAM cao hơn OOK khoảng 4 lần ở cùng tốc độ bit và chiều dài sợi, nhờ tốc độ ký hiệu chỉ bằng một nửa OOK; phù hợp hơn cho tuyến có tán sắc tích lũy lớn (băng 1550 nm, không bù tán sắc).
+4. **Cự ly truyền dẫn ($L_{max}$)**: OOK vượt trội rõ rệt ở tốc độ vừa và thấp ($10-20\ \text{Gb/s}$) trong tuyến bị giới hạn bởi suy hao (tại $R_b = 10\ \text{Gb/s}$, $P_i = 0\ \text{dBm}$: $L_{max}\approx 89\ \text{km}$ với OOK so với $\approx 77\ \text{km}$ với 4-PAM). Ưu thế này thu hẹp dần khi $R_b$ tăng; ở tốc độ rất cao ($R_b \gtrsim 60\ \text{Gb/s}$, vùng bị giới hạn bởi tán sắc), $L_{max}$ của cả hai định dạng đều suy giảm mạnh và hội tụ về mức thấp dưới $10\ \text{km}$, gần như không còn phụ thuộc vào công suất phát.
+5. **Độ phức tạp bộ thu/DSP**: OOK chỉ cần một ngưỡng quyết định duy nhất, cấu trúc bộ thu đơn giản; 4-PAM cần nhiều ngưỡng quyết định hơn, đổi lại hiệu quả sử dụng băng thông cao hơn.
