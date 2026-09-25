@@ -1,8 +1,8 @@
 # IM-DD Optical Access Link — Trade-off Study
 
-Dự án này mô phỏng một tuyến thông tin quang IM-DD (Intensity Modulation / Direct Detection) sử dụng thư viện OptiCommPy.
+Dự án này mô phỏng một tuyến thông tin quang IM-DD (Intensity Modulation / Direct Detection) sử dụng thư viện **OptiCommPy**.
 
-Mục tiêu của dự án là so sánh hiệu năng của OOK và 4-PAM trong các điều kiện khác nhau của bộ thu và kênh truyền quang.
+Mục tiêu của đề tài là khảo sát, so sánh và đánh giá định lượng hiệu năng truyền dẫn (BER, Q-factor, EVM) giữa hai định dạng điều chế **OOK** và **4-PAM** dưới tác động của công suất thu, giới hạn băng thông bộ thu, tán sắc sắc thể (Chromatic Dispersion) và chiều dài sợi quang.
 
 ## Ghi nhận
 
@@ -13,60 +13,41 @@ Một số cấu trúc mô phỏng và quy trình khởi tạo được tham kh�
 Tài liệu tham khảo:
 - https://opticommpy.readthedocs.io/en/latest/getting_started.html
 - https://github.com/edsonportosilva/OptiCommPy/blob/main/examples/basic_OOK_transmission.ipynb
+
 ## Nội dung mô phỏng
 
-- Mô phỏng tuyến IM-DD cơ bản.
-- Quan sát Eye Diagram tại phía phát và phía thu.
-- Khảo sát BER theo công suất quang thu.
-- Khảo sát BER theo băng thông bộ thu.
-- Khảo sát BER theo chiều dài sợi quang.
-- Khảo sát BER theo hệ số tán sắc.
-- So sánh hiệu năng giữa OOK và 4-PAM (TODO)
+- **Mô phỏng toàn tuyến IM-DD**: Khối phát (OOK/4-PAM Mã hóa Gray + MZM) $\rightarrow$ Kênh sợi quang đơn mốt (Suy hao + Tán sắc) $\rightarrow$ Khối thu (Photodiode + Ước lượng ngưỡng phân định/pha lấy mẫu tối ưu từ Pilot).
+- **Mắt tín hiệu (Eye Diagram)**: Trực quan hóa đồ thị mắt phía phát và phía thu.
+- **Power Sweep**: Khảo sát BER theo công suất thu ($P_{rx}$) tại các mức tốc độ bit (10–100 Gb/s) và xác định chênh lệch công suất (Power penalty).
+- **Bandwidth Sweep**: Khảo sát BER và EVM theo băng thông bộ thu ($B/R_s$), xác định 3 vùng hoạt động (giới hạn bởi ISI, vùng băng thông tối ưu, giới hạn bởi nhiễu tích lũy).
+- **Dispersion Sweep**: Khảo sát BER theo hệ số tán sắc ($D$) và xác định giới hạn chịu tán sắc tối đa ($D_{limit}$) của OOK và 4-PAM.
+- **Length Sweep & $L_{max}$**: Khảo sát BER theo chiều dài sợi quang ($L$) và so sánh cự ly truyền dẫn tối đa $L_{max}$ giữa OOK và 4-PAM theo tốc độ bit và công suất phát.
 
-## Files
+## Structure / Files
 
-- `run_all_experiments.py` — main script, chạy toàn bộ nội dung mô phỏng và lưu hình.
-- `imdd_lib.py` — thư viện mô phỏng, bao gồm các khối của hệ thống IM-DD, các hàm khảo sát và vẽ kết quả.
-- `requirements.txt` — danh sách các thư viện Python cần cài đặt để chạy dự án.
-- `main_simulation.ipynb` — notebook phụ trợ dùng để minh họa cách sử dụng thư viện mô phỏng, cấu hình tham số, chạy các thí nghiệm và trực quan hóa kết quả.
+- `imdd_lib.py` — Thư viện mô phỏng cốt lõi, bao gồm khởi tạo các khối phát/kênh/thu, các hàm quét tham số 1D/2D, tính toán chỉ tiêu (BER, Q-factor, EVM) và trực quan hóa kết quả.
+- `run_all_experiments.py` — Script chính tự động thi hành toàn bộ các khảo sát, xuất dữ liệu và lưu biểu đồ kết quả. (Cũ)
+- `main_simulation.ipynb`/`main_simulation_new.ipynb` — Notebook minh họa chi tiết từng bước quy trình chạy mô phỏng, cấu hình tham số và trực quan hóa kết quả.
+- `requirements.txt` — Danh sách các thư viện Python cần thiết.
 
 ## Cài đặt
 
 ```bash
 pip install -r requirements.txt
-pip install OptiCommPy      # thư viện core
+pip install OptiCommPy      # thư viện core mô phỏng quang
 ```
 
-## Chạy
+## Chạy 
 
-```bash
-# Chạy đầy đủ, đúng tham số như notebook gốc (nBits=100,000 mỗi lần, có thể mất thời gian)
-python run_all_experiments.py
+Toàn bộ các khảo sát và thử nghiệm mô phỏng được thực hiện trực tiếp thông qua hai file Jupyter Notebook: main_simulation.ipynb và main_simulation_new.ipynb
 
-# Chạy nhanh để kiểm tra pipeline hoạt động (nBits nhỏ, sweep thô — BER sẽ nhiễu, không dùng để lấy số liệu thật)
-python run_all_experiments.py --quick
+## Kết quả mô phỏng
 
-# Chỉ định thư mục lưu kết quả (mặc định: ./results/figures)
-python run_all_experiments.py --output-dir results
+Toàn bộ kết quả mô phỏng, hình ảnh biểu đồ đồ thị (PNG) và dữ liệu thống kê bảng biểu thu được sau khi thực thi notebook đều được lưu trong thư mục result/:
 
-# Hiện hình trực tiếp khi chạy (ngoài việc lưu file)
-python run_all_experiments.py --show
+## Kết luận Trade-off chính
 
-# Bỏ qua phần 3 (single-run sanity check + eye diagram) nếu chỉ cần sweep
-python run_all_experiments.py --skip-sanity
-```
-
-## Kết quả
-
-Script tạo 8 hình PNG trong thư mục output (mặc định `results/figures`):
-
-| File | Nội dung |
-|---|---|
-| `03_eye_tx_ook.png`, `03_eye_rx_ook.png` | Eye diagram Tx/Rx — OOK |
-| `03_eye_tx_pam4.png`, `03_eye_rx_pam4.png` | Eye diagram Tx/Rx — PAM4 |
-| `04_ber_vs_power.png` | Sweep 1 — BER vs công suất thu |
-| `05_ber_vs_bandwidth.png` | Sweep 2 — BER vs băng thông receiver |
-| `06_ber_vs_length.png` | Sweep 3 — BER vs chiều dài sợi quang |
-| `07_ber_vs_dispersion.png` | Sweep 4 — BER vs tán sắc |
-
-
+1. **Độ nhạy thu & Công suất**: OOK có độ nhạy thu tốt hơn 4-PAM (power penalty của 4-PAM khoảng 4 dB tại 10 Gb/s để đạt $\text{BER} = 10^{-3}$).
+2. **Băng thông phần cứng**: 4-PAM tiết kiệm băng thông ký hiệu ($R_s = R_b/2$), giúp hoạt động tốt hơn OOK ở tốc độ bit cao khi phần cứng bị giới hạn băng thông.
+3. **Khả năng chịu tán sắc**: Giới hạn chịu tán sắc $D_{limit}$ của 4-PAM cao hơn OOK khoảng 4 lần ở cùng tốc độ bit và chiều dài sợi.
+4. **Cự ly truyền dẫn ($L_{max}$)**: OOK vượt trội ở tốc độ vừa và thấp ($10 - 20 \text{ Gb/s}$) trong tuyến bị giới hạn bởi suy hao. Ở tốc độ rất cao (vùng bị giới hạn bởi tán sắc), $L_{max}$ của cả hai định dạng đều suy giảm và hội tụ về mức thấp dưới $10 \text{ km}$.
