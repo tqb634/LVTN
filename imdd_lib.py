@@ -128,100 +128,103 @@ def build_channel(sigTxo, paramCh):
 # 4. RECEIVER BLOCK
 # =============================================================================
 
-def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100):
+def build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=100, n_train=2000):
     """
-    Receiver chain: photodiode → normalization → sampling → decision → BER.
-    Supports OOK (M=2) and 4-PAM (M=4)
+    Receiver chain: photodiode -> normalization -> pilot-aided estimation of
+    sampling phase & decision thresholds -> decision on the payload -> BER.
+    Supports OOK (M=2) and 4-PAM (M=4).
 
     Parameters
     ----------
-    sigCh   : ndarray    — Optical signal at the photodiode input
-    bitsTx  : ndarray    — Reference transmitted bit sequence
-    M       : int        — Modulation order (2 or 4)
-    SpS     : int        — Samples per symbol
-    paramPD : parameters — Photodiode config (ideal, B, Fs, ipd_sat, ...)
-    discard : int        — Number of symbols to discard at each end when counting BER
+    sigCh   : ndarray    -- Optical signal at the photodiode input
+    bitsTx  : ndarray    -- Transmitted bits. Only the first n_train*log2(M)
+                            bits (the pilot) are visible to the receiver
+                            algorithm; the remainder is used for scoring.
+    M       : int        -- Modulation order (2 or 4)
+    SpS     : int        -- Samples per symbol
+    paramPD : parameters -- Photodiode config (ideal, B, Fs, ipd_sat, ...)
+    discard : int        -- Guard symbols: skipped at the start of the pilot
+                            (filter transient) and at the end of the payload
+    n_train : int        -- Length of the known pilot, in symbols
 
     Returns
     -------
     dict with keys:
-        'BER'    : float   — Measured bit error rate
-        'Pb'     : float   — Approx. theoretical BER from worst-case Q-factor
-                             (exact for OOK, approximate for 4-PAM)
-        'Q'      : float   — Worst-case (minimum) eye Q-factor across all
-                             adjacent decision levels
-        'I_Rx'   : ndarray — Full-rate photodiode current (used for eye diagrams)
-        'I_dec'  : ndarray — Symbol-rate samples at decision point
-        'bitsRx' : ndarray — Decided bit sequence
+        'BER'      : float   -- Bit error rate measured on the PAYLOAD only
+        'BER_train': float   -- BER on the pilot (in-sample, for reference)
+        'Pb'       : float   -- Approx. theoretical BER from the pilot-estimated
+                                worst-case Q (exact for OOK, approx. for 4-PAM)
+        'Q'        : float   -- Worst-case eye Q-factor estimated on the pilot
+        'I_Rx'     : ndarray -- Full-rate photodiode current (for eye diagrams)
+        'I_dec'    : ndarray -- Symbol-rate samples at the chosen phase
+        'bitsRx'   : ndarray -- Decided bits for the whole frame (pilot+payload)
+        'phase'    : int     -- Sampling phase chosen from the pilot
+        'means'    : ndarray -- Per-level means estimated on the pilot
+        'stds'     : ndarray -- Per-level stds estimated on the pilot
+        'thr'      : ndarray -- Decision thresholds estimated on the pilot
+        'n_train'  : int     -- Pilot length used [symbols]
     """
     if M not in (2, 4):
         raise ValueError(f"Unsupported modulation order M={M}. Use M=2 (OOK) or M=4 (PAM4).")
 
+    bps = int(np.log2(M))                       # bits per symbol
+    n_sym = bitsTx.size // bps                  # symbols in the frame
+
+    if n_train <= 2 * discard:
+        raise ValueError(f"n_train={n_train} must be > 2*discard={2 * discard}.")
+    if n_train + discard >= n_sym:
+        raise ValueError(
+            f"Frame too short: n_train={n_train} + discard={discard} >= {n_sym} symbols."
+        )
+
     # Ideal constellation levels in ascending order.
-    # OOK : [-1, 1]
-    # 4-PAM : [-3, -1, 1, 3]
+    # OOK : [-1, 1]   |   4-PAM : [-3, -1, 1, 3]
     levels = np.sort(grayMapping(M, 'pam').real)
 
-    # Reconstruct the ideal transmitted PAM symbols from the known Tx bit sequence.
-    symbTx = modulateGray(bitsTx, M, 'pam').real
-
-    # Assign each ideal transmitted symbol to its constellation index (0...M-1).
-    # For calculating means and stds.
-    symb_idx = np.argmin(np.abs(symbTx[:, None] - levels[None, :]), axis=1)
+    # The receiver is allowed to know only pilot
+    pilot_bits = bitsTx[: n_train * bps]
+    pilot_sym  = modulateGray(pilot_bits, M, 'pam').real
+    pilot_idx  = np.argmin(np.abs(pilot_sym[:, None] - levels[None, :]), axis=1)
 
     # Optical-to-electrical conversion
     I_Rx      = photodiode(sigCh, paramPD)
     I_Rx_full = I_Rx.copy()  # keep full-rate copy for eye diagram
 
-    # Normalize
+    # Normalize (uses only the received waveform)
     I_Rx = I_Rx / np.std(I_Rx)
 
-    # Sample (one sample per symbol)
-    #I_dec = I_Rx[0::SpS]
-    best_phase = _find_best_sampling_phase(I_Rx, symb_idx, M, SpS, discard=discard)
-    I_dec = I_Rx[best_phase::SpS]
+    # ---- Pilot-aided estimation of sampling phase and thresholds ----------
+    phase, means, stds, thr, Q = _estimate_phase_and_thresholds(
+        I_Rx, pilot_idx, M, SpS, guard=discard
+    )
 
-    # Estimate the mean and standard deviation of each received symbol cluster.
-    # For computing optimal decision thresholds.
-    means = np.array([I_dec[symb_idx == k].mean() for k in range(M)])
-    stds = np.array([I_dec[symb_idx == k].std() for k in range(M)])
-
-     # Compute the optimum threshold between every pair of adjacent symbol levels.
-    thr = (stds[:-1] * means[1:] + stds[1:] * means[:-1]) / (stds[:-1] + stds[1:])
-
-    # Decide which constellation index the received symbol belong to.
-    # The resulting indices are mapped back to the corresponding
-    # ideal PAM constellation levels for Gray demodulation.
+    # ---- Sample and decide the whole frame with the pilot-derived settings
+    I_dec = I_Rx[phase::SpS][:n_sym]
     decided_idx = np.digitize(I_dec, thr)
     symbDec = levels[decided_idx]
     bitsRx = demodulateGray(symbDec, M, 'pam').astype(int)
 
-    # -------------------------------------------------------------------------
-    # Performance metrics
-    # -------------------------------------------------------------------------
-
-    # Worst-case eye Q-factor across all adjacent symbol pairs.
-    # For OOK this is the conventional Q-factor;
-    # For 4-PAM it corresponds to the smallest eye opening.
-    Q = np.min((means[1:] - means[:-1]) / (stds[1:] + stds[:-1]))
-
-    # Approximate theoretical BER derived from the worst-case Q-factor.
-    # This expression is exact for OOK and a nearest-neighbor approximation
-    # for Gray-coded M-PAM.
+    # ---- Metrics ----------------------------------------------------------
+    # Approximate theoretical BER from the pilot-estimated worst-case Q
+    # (exact for OOK, nearest-neighbour approximation for Gray-coded M-PAM).
     Pb = (2 * (M - 1) / M) * 0.5 * erfc(Q / np.sqrt(2)) / np.log2(M)
 
-    # Compute the simulated BER after discarding guard symbols at both ends
-    # to avoid filter transient effects.
-    err = np.logical_xor(
-        bitsRx[discard: bitsRx.size - discard],
-        bitsTx[discard: bitsTx.size - discard],
-    )
-    BER = np.mean(err)
+    # Simulated BER on the payload only (bits of symbols [n_train, n_sym-discard)),
+    # comparing against the ground truth (bitsTx)
+    b0, b1 = n_train * bps, (n_sym - discard) * bps
+    BER = np.mean(np.logical_xor(bitsRx[b0:b1], bitsTx[b0:b1]))
+
+    # In-sample BER on the pilot itself (optimistic; for diagnostics only).
+    g0 = discard * bps
+    BER_train = np.mean(np.logical_xor(bitsRx[g0:n_train * bps], pilot_bits[g0:]))
 
     return {
-        'BER': BER, 'Pb': Pb, 'Q': Q,
+        'BER': BER, 'BER_train': BER_train, 'Pb': Pb, 'Q': Q,
         'I_Rx': I_Rx_full, 'I_dec': I_dec, 'bitsRx': bitsRx,
+        'phase': phase, 'means': means, 'stds': stds, 'thr': thr,
+        'n_train': n_train, 'discard': discard,
     }
+
 
 # =============================================================================
 # 5. SINGLE-RUN SIMULATION
@@ -241,6 +244,7 @@ def run_link(
     nBits        = 100000,
     seed         = None,
     discard      = 100,
+    n_train      = 2000,
 ):
     """
     Run a complete IM-DD link simulation: Tx → Fiber → Rx → BER.
@@ -261,12 +265,16 @@ def run_link(
     rx_ideal     : bool      — True = noiseless, unlimited-bandwidth photodiode
     nBits        : int       — Number of bits to simulate
     seed         : int|None  — RNG seed (None = not fixed)
-    discard      : int       — Guard symbols excluded from BER count
+    discard      : int       — Guard symbols (pilot start / payload end)
+    n_train      : int       — Known pilot length [symbols] used by the receiver
+                               to estimate sampling phase and thresholds; BER is
+                               measured on the remaining payload only
 
     Returns
     -------
     result : dict
-        Performance metrics : 'BER', 'Pb', 'Q'
+        Performance metrics : 'BER' (payload), 'BER_train', 'Pb', 'Q'
+        Rx estimates        : 'phase', 'means', 'stds', 'thr', 'n_train'
         Signals             : 'I_Rx', 'I_dec', 'sigTxo', 'sigCh'
         Bit sequences       : 'bitsTx', 'bitsRx', 'symbTx'
         Sim parameters      : 'SpS', 'Rs', 'Fs', 'Pi_dBm', 'M'
@@ -312,7 +320,8 @@ def run_link(
     # Optical power received at the fiber output
     Prx_dBm = W2dBm(signalPower(sigCh))
 
-    rx_result = build_receiver(sigCh, bitsTx, M, SpS, paramPD, discard=discard)
+    rx_result = build_receiver(sigCh, bitsTx, M, SpS, paramPD,
+                               discard=discard, n_train=n_train)
 
     # Merge all results into a single dict
     result = rx_result
@@ -652,46 +661,100 @@ def plot_ber_vs_dispersion(
 # =============================================================================
 # 8. UTILITY FUNCTIONS
 # =============================================================================
-def _find_best_sampling_phase(I_Rx, symb_idx, M, SpS, discard=100):
+def calculate_evm(result, M=None):
     """
-    Scan phase offsets in [0, SpS)
-    Return the one that maximizes
-    the worst-case eye Q-factor (i.e. minimizes ISI penalty).
+    Calculate RMS EVM (%) on the payload of an IM-DD OOK/4-PAM link.
+
+    Since I_dec in build_receiver() is only normalized by std(I_Rx), its
+    offset/gain does not match the ideal PAM constellation (grayMapping).
+    Here, an affine transformation estimated FROM PILOTS (result['means'],
+    already available and used for estimating thr/Q) is applied to scale
+    I_dec to the exact range [-1,1] / [-3,-1,1,3] before calculating EVM.
     """
-    best_phase, best_Q = 0, -np.inf
+    M       = M or result['M']
+    I_dec   = result['I_dec']
+    means   = result['means']               # ascending, same order as levels
+    n_train = result['n_train']
+    discard = result.get('discard', 100)    # see patch below
 
-    # numbers of transmited symbols on TX side
-    n_symbols = symb_idx.size
+    levels = np.sort(grayMapping(M, 'pam').real)
 
+    # Calibrate gain (a) + offset (b), estimated strictly from pilots
+    a, b = np.polyfit(means, levels, 1)
+    I_norm = a * I_dec + b
+
+    # Payload: exclude pilots + guard symbols at both ends, aligned with BER calculation
+    payload = I_norm[n_train:-discard] if discard > 0 else I_norm[n_train:]
+
+    nearest_idx = np.argmin(np.abs(payload[:, None] - levels[None, :]), axis=1)
+    I_ideal = levels[nearest_idx]
+
+    P_avg_ideal = np.mean(levels**2)
+    evm_rms = np.sqrt(np.mean((payload - I_ideal)**2) / P_avg_ideal) * 100.0
+
+    return evm_rms
+
+def _cluster_stats(I_dec, idx, M):
+    """
+    Per-level mean/std of received samples grouped by known symbol index.
+    Returns (means, stds), or None if any level has < 2 samples.
+    """
+    means = np.empty(M)
+    stds  = np.empty(M)
+    for k in range(M):
+        cls = I_dec[idx == k]
+        if cls.size < 2:
+            return None
+        means[k] = cls.mean()
+        stds[k]  = cls.std()
+    return means, stds
+
+
+def _estimate_phase_and_thresholds(I_Rx, pilot_idx, M, SpS, guard=100):
+    """
+    Estimate the sampling phase and decision thresholds from a known pilot.
+
+    For each candidate phase in [0, SpS) the pilot samples are grouped by their
+    known symbol level; the phase with the largest worst-case eye Q-factor
+    (i.e. smallest ISI/noise penalty) is selected. Thresholds are then the
+    standard optimum thresholds between adjacent levels, computed from the
+    pilot means/stds at that phase.
+
+    Parameters
+    ----------
+    I_Rx      : ndarray -- Normalized full-rate received waveform
+    pilot_idx : ndarray -- Known pilot symbol indices (0..M-1), length n_train
+    guard     : int     -- Pilot symbols skipped at the start (filter transient)
+
+    Returns
+    -------
+    phase, means, stds, thr, Q  (all estimated on the pilot only)
+    """
+    n_train = pilot_idx.size
+    idx_p = pilot_idx[guard:]
+
+    best = None
     for phase in range(SpS):
-        # Sampling one sample per symbol
-        I_dec = I_Rx[phase::SpS]
-        n = min(I_dec.size, n_symbols)
-        I_dec_p, idx_p = I_dec[:n], symb_idx[:n]
-
-        # Remove leading and trailing symbols by discard amount
-        I_dec_p = I_dec_p[discard: n - discard]
-        idx_p   = idx_p[discard: n - discard]
-
-        means = np.full(M, np.nan)
-        stds  = np.full(M, np.nan)
-        valid = True
-        for k in range(M):
-            cls = I_dec_p[idx_p == k]
-            if cls.size < 2:          # not enough points to get a meaningful std
-                valid = False
-                break
-            means[k] = cls.mean()
-            stds[k]  = cls.std()
-
-        if not valid:
-            continue   # skip this phase
-
+        I_p = I_Rx[phase::SpS][guard:n_train]
+        stats = _cluster_stats(I_p, idx_p[:I_p.size], M)
+        if stats is None:
+            continue
+        means, stds = stats
         Q = np.min((means[1:] - means[:-1]) / (stds[1:] + stds[:-1]))
-        if Q > best_Q:
-            best_Q, best_phase = Q, phase
+        if best is None or Q > best[0]:
+            best = (Q, phase, means, stds)
 
-    return best_phase
+    if best is None:
+        raise ValueError(
+            "Pilot too short: some symbol level has fewer than 2 training "
+            "samples. Increase n_train."
+        )
+
+    Q, phase, means, stds = best
+    thr = (stds[:-1] * means[1:] + stds[1:] * means[:-1]) / (stds[:-1] + stds[1:])
+    thr = np.sort(thr)   # np.digitize needs monotonic thresholds (guards very low SNR)
+    return phase, means, stds, thr, Q
+
 
 def ber_floor(BER_array, floor=1e-12):
     """Clip a BER array to a minimum floor value to avoid log10(0)."""
@@ -780,6 +843,7 @@ def sweep_ber_vs_bw_and_power(bw_range, power_range, M=2, Rs=10e9, SpS=16,
     Pb  = np.zeros((nP, nB))
     Q   = np.zeros((nP, nB))
     Prx_dBm = np.zeros(nP)
+    EVM = np.zeros((nP, nB))
 
     total = nP * nB
     pbar = tqdm(total=total, desc='Sweep: BW x Power') if verbose else None
@@ -795,6 +859,7 @@ def sweep_ber_vs_bw_and_power(bw_range, power_range, M=2, Rs=10e9, SpS=16,
             BER[ip, ib] = res['BER']
             Pb[ip, ib]  = res['Pb']
             Q[ip, ib]   = res['Q']
+            EVM[ip, ib] = calculate_evm(res)
             if ib == 0:
                 Prx_dBm[ip] = res['Prx_dBm']
             if pbar is not None:
@@ -819,6 +884,7 @@ def sweep_ber_vs_bw_and_power(bw_range, power_range, M=2, Rs=10e9, SpS=16,
         'BER_opt': BER_opt,
         'Rs': Rs,
         'M': M,
+        'EVM': EVM,
     }
 
     # Optional Excel export (long format: one row per (power, bandwidth) pair)
@@ -832,6 +898,7 @@ def sweep_ber_vs_bw_and_power(bw_range, power_range, M=2, Rs=10e9, SpS=16,
             'BER': BER.ravel(),
             'Pb': Pb.ravel(),
             'Q': Q.ravel(),
+            'EVM': EVM.ravel()
         })
         save_to_excel_sheet(table, save_path, sheet_name)
 
@@ -1665,3 +1732,20 @@ def plot_lmax_contour(
         plt.show()
     else:
         plt.close()
+
+def plot_evm_vs_bandwidth_waterfall(result, title='EVM vs Bandwidth at Multiple Power Levels',
+                                     normalize_bw=True, save_path=None, show=True, dpi=300):
+    bw = result['bandwidth']; Rs = result.get('Rs', 10e9)
+    bw_axis = bw / Rs if normalize_bw else bw / 1e9
+    Prx = result['Prx_dBm']
+
+    plt.figure(figsize=(8, 6))
+    cmap = plt.cm.viridis; n = len(Prx)
+    for i, p in enumerate(Prx):
+        plt.plot(bw_axis, result['EVM'][i], 'o-', color=cmap(i / max(n-1,1)),
+                 markersize=3, label=f'Prx = {p:.1f} dBm')
+    plt.xlabel('Normalized Receiver Bandwidth (B/Rs)' if normalize_bw else 'Receiver Bandwidth (GHz)')
+    plt.ylabel('EVM (%)'); plt.title(title); plt.grid(True)
+    plt.legend(fontsize=8, ncol=2, loc='best'); plt.tight_layout()
+    if save_path: plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+    plt.show() if show else plt.close()
